@@ -1,4 +1,13 @@
 const $ = id => document.getElementById(id);
+let loadedShipName = null;
+
+function toastShip(msg) {
+  const el = document.createElement('div');
+  el.className = 'ship-toast';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }, 2600);
+}
 
 // ---------- 状态 ----------
 const state = {
@@ -324,6 +333,10 @@ function updateHUD() {
 function finish(win) {
   state.mode = 'result';
   state.result = { win, alt: state.maxAlt, t: state.t };
+  // 抵达卡门线 → 登记进机库（雷达站列表读的就是这里）
+  if (win && typeof fleetRecord === 'function') {
+    try { fleetRecord(state.stack, state.maxAlt, state.t); } catch (e) {}
+  }
   $('rTitle').textContent = win ? '🚀 成功进入太空！' : '💥 任务失败';
   $('rTitle').className = win ? 'win' : 'lose';
   $('rAlt').textContent = (state.maxAlt/1000).toFixed(2) + ' km';
@@ -453,8 +466,26 @@ document.addEventListener('keydown', e => {
 window.addEventListener('resize', () => { if (state.mode==='build') drawPreview(); });
 
 loadSprites();
+
+// 从主页雷达站选来的飞船：直接载入车间
+(function loadPendingShip() {
+  if (typeof fleetTakePending !== 'function') return;
+  const id = fleetTakePending();
+  if (!id) return;
+  const ship = fleetFind(id);
+  if (!ship || !Array.isArray(ship.stack)) return;
+  state.stack = ship.stack.map(p => ({ partId: p.partId, fuel: p.fuel || 0 }));
+  // 燃料箱一律加满，方便直接发射
+  state.stack.forEach(p => {
+    const def = PARTS[p.partId];
+    if (def && def.type === 'fuel') p.fuel = def.capacity;
+  });
+  loadedShipName = ship.name;
+})();
+
 setTimeout(() => { paintThumbs(); drawPreview(); }, 800);
 renderBuild();
+if (loadedShipName) toastShip(`已载入「${loadedShipName}」`);
 
 // 页面不可见时浏览器会暂停 requestAnimationFrame，这个钩子可手动步进物理，供自动化测试使用
 window.__rocket = {
