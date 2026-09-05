@@ -26,7 +26,7 @@ const state = {
 
 // ---------- 素材加载（有图用图，没图用矢量兜底） ----------
 const SPRITE_NAMES = ['engine_small','engine_medium','engine_large',
-                      'fuel_small','fuel_medium','fuel_large','decoupler','launchpad'];
+                      'fuel_small','fuel_medium','fuel_large','decoupler','capsule','launchpad'];
 function loadSprites() {
   let pending = SPRITE_NAMES.length;
   if (!pending) { state.spritesReady = true; return; }
@@ -71,15 +71,17 @@ function renderBuild() {
   const pal = $('palette');
   if (!pal.dataset.filled) {
     pal.innerHTML = '';
-    ['engine','fuel','decoupler'].forEach(cat => {
+    ['capsule','engine','fuel','decoupler'].forEach(cat => {
       const items = PART_LIST.filter(p => p.type === cat);
       const g = document.createElement('div'); g.className = 'pal-group';
-      g.innerHTML = `<div class="pal-title">${cat==='engine'?'引擎':cat==='fuel'?'燃料箱':'分离器'}</div>`;
+      g.innerHTML = `<div class="pal-title">${
+          cat==='engine'?'引擎':cat==='fuel'?'燃料箱':cat==='capsule'?'返回舱':'分离器'}</div>`;
       items.forEach(p => {
         const b = document.createElement('button');
         b.className = 'pal-item';
         const spec = p.type==='engine' ? `推力 ${p.thrust} · 耗 ${p.burn}/s`
                    : p.type==='fuel'   ? `容量 ${p.capacity}`
+                   : p.type==='capsule'? `载人舱 · 重 ${p.mass}`
                    : `分离推力 ${p.separationImpulse}`;
         b.innerHTML = `<span class="pi-thumb" data-s="${p.sprite}"></span>
                        <span class="pi-txt"><b>${p.name}</b><i>${spec}</i></span>`;
@@ -107,7 +109,8 @@ function renderBuild() {
       <span class="sr-n">${i+1}</span>
       <span class="sr-name">${def.name}</span>
       <span class="sr-spec">${def.type==='engine' ? `${def.thrust}推 / ${def.burn}耗`
-                            : def.type==='fuel' ? `${p.fuel} 燃料` : '分离'}</span>
+                            : def.type==='fuel' ? `${p.fuel} 燃料`
+                            : def.type==='capsule' ? '载人' : '分离'}</span>
       <span class="sr-btns">
         <button title="上移">▲</button><button title="下移">▼</button><button title="删除">✕</button>
       </span>`;
@@ -166,6 +169,8 @@ const PAD_GRASS_COLOR = '#6e863f';  // 取自贴图草地基色，接缝才看�
 // ---------- 预览画布 ----------
 const pv = $('preview'), pvx = pv.getContext('2d');
 function drawPreview() {
+  // 画布隐藏时宽高为 0，继续画会得到负数尺寸（canvas arc 会直接抛错）
+  if (pv.clientWidth <= 0 || pv.clientHeight <= 40) return;
   const W = pv.width = pv.clientWidth * devicePixelRatio;
   const H = pv.height = pv.clientHeight * devicePixelRatio;
   pvx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
@@ -186,6 +191,7 @@ function drawPreview() {
 
 // 画单个零件（有贴图用贴图，否则矢量兜底）
 function drawPart(ctx, def, x, y, w, h) {
+  if (!(w > 0) || !(h > 0)) return;
   const img = state.sprites[def.sprite];
   if (img) { ctx.drawImage(img, x, y, w, h); return; }
   ctx.save();
@@ -210,6 +216,19 @@ function drawPart(ctx, def, x, y, w, h) {
     ctx.fillStyle = '#5d6b80'; ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#ff8a3d';
     ctx.fillRect(x + w*0.1, y + bodyH*0.3, w*0.8, bodyH*0.18);
+  } else if (def.type === 'capsule') {
+    // 截头圆锥：上窄下宽
+    ctx.beginPath();
+    ctx.moveTo(x + w*0.28, y);
+    ctx.lineTo(x + w*0.72, y);
+    ctx.lineTo(x + w, y + h*0.86);
+    ctx.lineTo(x, y + h*0.86);
+    ctx.closePath();
+    ctx.fillStyle = '#e8edf5'; ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#2b3f5c';
+    ctx.fillRect(x, y + h*0.86, w, h*0.14);          // 隔热底
+    ctx.fillStyle = '#7c8aa0';
+    ctx.beginPath(); ctx.arc(x + w*0.5, y + h*0.45, w*0.1, 0, 7); ctx.fill();
   } else {
     ctx.fillStyle = '#f5c542';
     ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
@@ -899,7 +918,8 @@ window.addEventListener('resize', () => { if (state.mode==='build') drawPreview(
 loadSprites();
 
 // 从主页雷达站选来的飞船：直接载入车间
-(function loadPendingShip() {
+// 函数声明（不是 IIFE 里的具名函数表达式）—— enterBuilding 需要从外部调用它
+function loadPendingShip() {
   if (typeof fleetTakePending !== 'function') return;
   const id = fleetTakePending();
   if (!id) return;
@@ -912,7 +932,7 @@ loadSprites();
     if (def && def.type === 'fuel') p.fuel = def.capacity;
   });
   loadedShipName = ship.name;
-})();
+}
 
 setTimeout(() => { paintThumbs(); drawPreview(); }, 800);
 renderBuild();

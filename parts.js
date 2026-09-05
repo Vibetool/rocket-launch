@@ -2,7 +2,7 @@
 // 引擎: 推力 / 每秒耗油    燃料箱: 容量
 // 所有零件两端等宽（w），高度 h 决定视觉比例
 
-const PART_TYPES = { ENGINE: 'engine', FUEL: 'fuel', DECOUPLER: 'decoupler' };
+const PART_TYPES = { ENGINE: 'engine', FUEL: 'fuel', DECOUPLER: 'decoupler', CAPSULE: 'capsule' };
 
 const PARTS = {
   engine_large:  { id:'engine_large',  type:'engine', name:'引擎 大', w:56, h:44, mass:6,
@@ -19,6 +19,10 @@ const PARTS = {
   // 分离器：从它所在位置把火箭断成两截，分离瞬间给一点推力
   decoupler: { id:'decoupler', type:'decoupler', name:'分离器', w:52, h:16, mass:1,
                separationImpulse:120, sprite:'decoupler' },
+
+  // 返回舱：载人舱段，装在火箭顶端。本身没有动力，是要送上天再带回来的那部分
+  capsule: { id:'capsule', type:'capsule', name:'返回舱', w:48, h:50, mass:3,
+             sprite:'capsule' },
 };
 
 const PART_LIST = Object.values(PARTS);

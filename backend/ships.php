@@ -58,7 +58,7 @@ try {
 // 合法零件白名单 —— 必须与前端 parts.js 一致，防止伪造设计
 const VALID_PARTS = [
     'engine_large', 'engine_medium', 'engine_small',
-    'fuel_large', 'fuel_medium', 'fuel_small', 'decoupler',
+    'fuel_large', 'fuel_medium', 'fuel_small', 'decoupler', 'capsule',
 ];
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';

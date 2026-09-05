@@ -200,7 +200,7 @@ function stageCount(stack) {
 function miniRocket(stack) {
   const wrap = document.createElement('div');
   wrap.className = 'ship-mini';
-  const COLORS = { engine: '#ff8a3d', fuel: '#e2e9f4', decoupler: '#f5c542' };
+  const COLORS = { engine: '#ff8a3d', fuel: '#e2e9f4', decoupler: '#f5c542', capsule: '#7dd3fc' };
   stack.forEach(p => {
     const def = PARTS[p.partId];
     if (!def) return;

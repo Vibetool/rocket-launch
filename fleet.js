@@ -8,7 +8,7 @@ const PRESET_SHIPS = [
   {
     id: 'preset_三级标准型',
     name: '三级标准型',
-    desc: '系统预置 · 大中小三级递减，级间分离器',
+    desc: '系统预置 · 大中小三级递减，级间分离器，顶端返回舱',
     preset: true,
     stack: [
       { partId: 'engine_large',  fuel: 0   },
@@ -19,6 +19,7 @@ const PRESET_SHIPS = [
       { partId: 'decoupler',     fuel: 0   },
       { partId: 'engine_small',  fuel: 0   },
       { partId: 'fuel_small',    fuel: 20  },
+      { partId: 'capsule',       fuel: 0   },
     ],
   },
 ];
