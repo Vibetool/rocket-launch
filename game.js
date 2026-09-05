@@ -143,6 +143,9 @@ function renderBuild() {
     : `起飞推重比良好 · 第一级可烧 ${burnTime.toFixed(0)} 秒`;
   $('btnLaunch').disabled = !(s1Thrust > 0 && s1Fuel > 0 && twr >= 1.05);
   drawPreview();
+  // 联机：本地改动的设计要同步给对方（收到对方设计时不回传）
+  if (coopOn() && !COOP.applyingRemote) netSendShip(state.stack);
+  if (coopOn()) updateCoopGate();
 }
 
 function paintThumbs() {
@@ -251,8 +254,9 @@ function stageHeightM(st) {
   return st.parts.reduce((s, p) => s + PARTS[p.partId].h, 0) * PART_UNIT_M;
 }
 
-function separate() {
+function separate(auto) {
   if (state.active >= state.stages.length - 1) return;
+  if (coopOn() && !auto && state.phase === 'ascent') return;   // 联机不允许手动分级
   const cur = state.stages[state.active];
   const nxt = state.stages[state.active + 1];
   // 上面级从下面级顶端脱离，继承速度并获得分离推力
@@ -315,6 +319,7 @@ function update(dt) {
       x: act.x + (Math.random()-.5)*10, y: act.y - 4,
       vx: (Math.random()-.5)*12, vy: -20 - Math.random()*30, life: .5 });
   }
+  coopAutoStage(dt);
   state.particles.forEach(p => { p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt; });
   state.particles = state.particles.filter(p => p.life > 0);
 
@@ -429,7 +434,13 @@ function startMoonLanding() {
   state.phase = 'moon_landing';
   state.world = 'moon';
   st.y = MOON_START_ALT;          // 1 公里高度开始
-  st.vy = 0; st.vx = 0; st.x = 0;
+  // 惯性保留但方向翻转：上升的动能变成朝月面下坠的力。
+  // 原速约 1950 m/s，直接翻转需要 20+ km 刹车距离（只有 1km）必然撞毁，
+  // 所以按本着陆器"1km 内能刹停的极限速度"的 55% 封顶，保证有解又有压力。
+  const aNet = st.maxThrust * THRUST_SCALE / st.mass - gravityAt(0);
+  const vLimit = Math.sqrt(2 * Math.max(1, aNet) * MOON_START_ALT) * 0.55;
+  st.vy = -Math.min(Math.abs(st.vy), vLimit);
+  st.vx = 0; st.x = 0;
   st.landed = false; st.crashed = false;
   st.throttle = 0;                // 月面降落改为手动控制油门
   state.camY = MOON_START_ALT;
@@ -587,7 +598,7 @@ const MOON_SAFE_SPEED = 8;       // 触地速度上限（月面无大气，全�
 // 火焰配色：常态黄→橙；推力加成生效时整条尾焰变蓝→紫
 const FLAME = {
   normal: { hot: '#ffd166', cool: '#ff6b35', spark: '#ffd76e' },
-  boost:  { hot: '#7cc8ff', cool: '#a855f7', spark: '#c4b5fd' },
+  boost:  { hot: '#b8e4ff', cool: '#cbb0fb', spark: '#e2d6ff' },   // 淡蓝→淡紫
 };
 function flamePalette() { return state.boost > 1 ? FLAME.boost : FLAME.normal; }
 
@@ -707,6 +718,127 @@ function renderMoon(W, H) {
   }
 }
 
+// ================= 联机（双人共操一枚火箭） =================
+// 规则：两人都进车间才能动工；两人都按发射才点火；联机模式自动分级。
+const COOP = { autoSepTimer: null, applyingRemote: false };
+
+function coopOn() { return typeof NET !== 'undefined' && NET.active && NET.connected; }
+
+// 进入制造车间（单人直接进；联机要等两人都进）
+function enterBuilding(withShip) {
+  if (withShip) loadPendingShip();
+  window.HOME.hide();
+  $('buildScreen').hidden = false;
+  $('flyScreen').hidden = true;
+  state.mode = 'build';
+  if (coopOn()) { netSetBuilding(true); netSendShip(state.stack); }
+  renderBuild();
+  updateCoopGate();
+}
+
+function backToHome() {
+  if (coopOn()) { netSetBuilding(false); netSetLaunchReady(false); }
+  $('buildScreen').hidden = true;
+  $('flyScreen').hidden = true;
+  window.HOME.show();
+  updateCoopGate();
+}
+
+// 门禁：对方没进车间时，本方什么都不能操作
+function updateCoopGate() {
+  const gate = $('coopGate');
+  if (!coopOn()) { if (gate) gate.hidden = true; $('buildScreen').classList.remove('locked'); return; }
+  const waiting = NET.meInBuilding && !NET.peerInBuilding;
+  $('buildScreen').classList.toggle('locked', waiting);
+  if (gate) {
+    gate.hidden = !waiting;
+    gate.textContent = `⏳ 等待 ${NET.peerName || '对方'} 进入火箭制造大楼…`;
+  }
+  // 发射按钮：本方已就绪但对方没按 → 常态；对方按了本方没按 → 高亮
+  const b = $('btnLaunch');
+  b.classList.toggle('await-peer', NET.peerLaunchReady && !NET.meLaunchReady);
+  b.textContent = NET.meLaunchReady
+    ? (NET.peerLaunchReady ? '🚀 发射' : '✅ 已就绪 · 等待对方')
+    : (NET.peerLaunchReady ? '🚀 对方已就绪 · 点击发射' : '🚀 发射');
+}
+
+// 联机下点发射 = 举手，两人都举手才真发射
+function requestLaunch() {
+  if (!coopOn()) { launch(); return; }
+  if (NET.meInBuilding && !NET.peerInBuilding) return;   // 对方没进楼，禁止操作
+  netSetLaunchReady(true);
+  updateCoopGate();
+  if (netBothLaunchReady()) { netSend({ t: 'launch' }); doCoopLaunch(); }
+}
+
+function doCoopLaunch() {
+  NET.meLaunchReady = false; NET.peerLaunchReady = false;
+  launch();
+}
+
+// 联机模式：燃料耗尽 1 秒后自动分离（不能手动）
+function coopAutoStage(dt) {
+  if (!coopOn() || state.phase !== 'ascent') return;
+  const act = state.stages[state.active];
+  if (!act || state.active >= state.stages.length - 1) return;
+  if (act.totalFuel <= 0.01) {
+    COOP.autoSepTimer = (COOP.autoSepTimer || 0) + dt;
+    if (COOP.autoSepTimer >= 1.0) { separate(true); COOP.autoSepTimer = 0; }
+  } else {
+    COOP.autoSepTimer = 0;
+  }
+}
+
+// 联机事件总线
+function bindCoopEvents() {
+  if (typeof NET === 'undefined') return;
+  NET.onEvent = (type, data) => {
+    switch (type) {
+      case 'connected':
+        $('coopBar').hidden = false;
+        $('cbDot').classList.remove('off');
+        $('cbText').textContent = `已连接 · ${NET.peerName || '对方'}`;
+        $('coopModal').hidden = true;
+        $('btnTalk').disabled = !netHasMic();
+        toastShip(`已与 ${NET.peerName || '对方'} 连接`);
+        break;
+      case 'disconnected':
+        $('cbDot').classList.add('off');
+        $('cbText').textContent = '连接中断';
+        break;
+      case 'peerJoined':
+        $('coopStatus').textContent = `${data || '对方'} 已加入，正在建立连接…`;
+        NET.peerName = data || NET.peerName;
+        break;
+      case 'building':
+        window.HOME.highlightVab(!!data);     // 对方进楼 → 本方主页高亮制造楼
+        updateCoopGate();
+        break;
+      case 'launchReady':
+        updateCoopGate();
+        if (data) toastShip(`${NET.peerName || '对方'} 已按下发射，等你确认`);
+        break;
+      case 'launch':
+        doCoopLaunch();
+        break;
+      case 'ship':
+        if (Array.isArray(data) && state.mode === 'build') {
+          COOP.applyingRemote = true;          // 防止回传形成回环
+          state.stack = data.map(p => ({ partId: p.partId, fuel: p.fuel || 0 }));
+          renderBuild();
+          COOP.applyingRemote = false;
+        }
+        break;
+      case 'peerLeft':
+        toastShip('对方已离开联机');
+        $('cbText').textContent = '对方已离开';
+        window.HOME.highlightVab(false);
+        updateCoopGate();
+        break;
+    }
+  };
+}
+
 // ---------- 事件 ----------
 // 月面降落：按住点火（空格或按钮）
 function setBurn(on) {
@@ -725,9 +857,10 @@ $('btnContinue').addEventListener('click', continueFlight);
 $('btnMoonLand').addEventListener('click', startMoonLanding);
 $('btnMoonHome').addEventListener('click', () => { location.href = 'index.html'; });
 
-$('btnLaunch').onclick = launch;
+$('btnLaunch').onclick = requestLaunch;
 $('btnSep').onclick = separate;
 $('btnAbort').onclick = backToBuild;
+$('btnHome').addEventListener('click', backToHome);
 $('btnAgain').onclick = () => { $('resultBox').hidden = true; launch(); };
 $('btnEdit').onclick = () => { $('resultBox').hidden = true; backToBuild(); };
 $('btnClear').onclick = () => { state.stack = []; renderBuild(); };
@@ -744,6 +877,7 @@ function backToBuild() {
   $('flyScreen').hidden = true;
   $('buildScreen').hidden = false;
   renderBuild();
+  updateCoopGate();
 }
 document.addEventListener('keydown', e => {
   if (state.mode !== 'fly') return;
@@ -778,6 +912,8 @@ renderBuild();
 if (loadedShipName) toastShip(`已载入「${loadedShipName}」`);
 
 // 页面不可见时浏览器会暂停 requestAnimationFrame，这个钩子可手动步进物理，供自动化测试使用
+window.GAME = { enterBuilding, backToHome, updateCoopGate, bindCoopEvents };
+
 window.__rocket = {
   state,
   step(seconds = 1) {
@@ -795,3 +931,83 @@ window.__rocket = {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) { last = 0; acc = 0; }
 });
+
+// ---------- 联机 UI 绑定 ----------
+(function bindCoopUI() {
+  if (typeof netAvailable !== 'function') return;
+  const has = netAvailable();
+  $('btnCoop').hidden = !has;
+  if (!has) return;
+  bindCoopEvents();
+
+  const err = m => { $('coopErr').textContent = m || ''; };
+  $('btnCoop').addEventListener('click', () => {
+    $('coopName').value = (typeof playerName === 'function' && playerName()) || '';
+    $('coopModal').hidden = false; err('');
+  });
+  $('coopClose').addEventListener('click', () => { $('coopModal').hidden = true; });
+
+  $('btnCreateRoom').addEventListener('click', async () => {
+    const n = $('coopName').value.trim();
+    if (typeof setPlayerName === 'function') setPlayerName(n);
+    err('创建中…');
+    try {
+      const code = await netCreateRoom(n);
+      $('coopIdle').hidden = true; $('coopWaiting').hidden = false;
+      $('roomCode').textContent = code;
+      $('coopStatus').textContent = '等待对方加入…';
+      err('');
+    } catch (e) { err('创建失败：' + e.message); }
+  });
+
+  $('btnJoinRoom').addEventListener('click', async () => {
+    const code = $('coopCode').value.trim().toUpperCase();
+    if (code.length !== 6) return err('房号是 6 位');
+    const n = $('coopName').value.trim();
+    if (typeof setPlayerName === 'function') setPlayerName(n);
+    // 受邀方先弹同意框
+    $('inviteText').textContent = `加入房间 ${code}？加入后你将与房主共同操控一枚火箭。`;
+    $('inviteModal').hidden = false;
+    $('inviteModal').dataset.code = code;
+    $('inviteModal').dataset.name = n;
+  });
+
+  $('btnInviteNo').addEventListener('click', () => { $('inviteModal').hidden = true; });
+  $('btnInviteYes').addEventListener('click', async () => {
+    const code = $('inviteModal').dataset.code, n = $('inviteModal').dataset.name;
+    $('inviteModal').hidden = true;
+    err('加入中…');
+    try {
+      const host = await netJoinRoom(code, n);
+      $('coopIdle').hidden = true; $('coopWaiting').hidden = false;
+      $('roomCode').textContent = code;
+      $('coopStatus').textContent = `已加入 ${host} 的房间，正在建立连接…`;
+      err('');
+    } catch (e) {
+      err('加入失败：' + ({ room_not_found: '房间不存在', room_full: '房间已满' }[e.message] || e.message));
+    }
+  });
+
+  $('btnCopyCode').addEventListener('click', () => {
+    const c = $('roomCode').textContent;
+    navigator.clipboard?.writeText(c).then(() => toastShip('房号已复制：' + c)).catch(() => {});
+  });
+
+  const quit = () => {
+    netLeave();
+    $('coopBar').hidden = true;
+    $('coopModal').hidden = true;
+    $('coopIdle').hidden = false; $('coopWaiting').hidden = true;
+    window.HOME.highlightVab(false);
+    updateCoopGate();
+  };
+  $('btnLeaveRoom').addEventListener('click', quit);
+  $('btnQuit').addEventListener('click', quit);
+
+  // 按住说话
+  const talk = on => { if (netSetTalking(on)) $('btnTalk').classList.toggle('on', on); };
+  $('btnTalk').addEventListener('mousedown', () => talk(true));
+  $('btnTalk').addEventListener('touchstart', e => { e.preventDefault(); talk(true); }, { passive: false });
+  ['mouseup','mouseleave','touchend','touchcancel'].forEach(ev =>
+    $('btnTalk').addEventListener(ev, () => talk(false)));
+})();

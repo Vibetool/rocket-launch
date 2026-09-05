@@ -22,3 +22,26 @@ CREATE TABLE IF NOT EXISTS rocket_ships (
   INDEX idx_created (created_at),
   INDEX idx_ip_time (ip_hash, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ==============================================================
+-- 联机对战：WebRTC 信令中转（真正的游戏数据走 P2P，不经服务器）
+-- ==============================================================
+CREATE TABLE IF NOT EXISTS rocket_rooms (
+  code        CHAR(6)      NOT NULL PRIMARY KEY,
+  host_name   VARCHAR(32)  NOT NULL,
+  guest_name  VARCHAR(32)  NULL,
+  state       ENUM('waiting','joined','closed') NOT NULL DEFAULT 'waiting',
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS rocket_signals (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  room       CHAR(6)      NOT NULL,
+  to_peer    ENUM('host','guest') NOT NULL,
+  payload    TEXT         NOT NULL,
+  created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_room_peer (room, to_peer, id),
+  INDEX idx_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

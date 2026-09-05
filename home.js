@@ -1,3 +1,5 @@
+// 主页模块（IIFE 隔离作用域：与 game.js 共存于同一页面，避免 $ / cv / PAD_* 等重名）
+(function () {
 // 主页：复用发射场贴图作地面，在同一片山丘上摆放制造大楼与雷达站
 const $ = id => document.getElementById(id);
 
@@ -94,7 +96,7 @@ function cloud(x, y, r) {
 }
 
 // ---------- 交互 ----------
-$('hsVab').addEventListener('click', () => { location.href = 'game.html'; });
+$('hsVab').addEventListener('click', () => { window.GAME.enterBuilding(); });
 
 const modal = $('fleetModal');
 $('hsRadar').addEventListener('click', openFleet);
@@ -160,10 +162,10 @@ async function renderFleet() {
     b.appendChild(apo);
 
     b.addEventListener('click', () => {
-      // 云端飞船先塞进本地缓存，制造页才查得到
       if (s.remote) cacheRemoteShip(s);
       fleetSetPending(s.id);
-      location.href = 'game.html';
+      closeFleet();
+      window.GAME.enterBuilding(true);   // 带飞船进车间
     });
     list.appendChild(b);
   });
@@ -210,3 +212,22 @@ function miniRocket(stack) {
 window.addEventListener('resize', draw);
 load();
 draw();
+
+
+// 对外接口
+window.HOME = {
+  show() {
+    document.getElementById('homeScreen').hidden = false;
+    document.getElementById('buildScreen').hidden = true;
+    document.getElementById('flyScreen').hidden = true;
+    draw();
+  },
+  hide() { document.getElementById('homeScreen').hidden = true; },
+  redraw: draw,
+  refreshFleet: renderFleet,
+  highlightVab(on) {
+    const el = document.getElementById('hsVab');
+    el.classList.toggle('peer-here', !!on);
+  },
+};
+})();

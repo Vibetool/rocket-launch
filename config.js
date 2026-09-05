@@ -2,3 +2,4 @@
 // 部署好 backend/ships.php 后填它的完整地址，例如：
 //   window.ROCKET_API = 'https://api.ovobot.ai/ships.php';
 window.ROCKET_API = '';
+window.ROCKET_ROOM_API = '';   // 部署 backend/room.php 后填它的地址，联机入口才会出现
