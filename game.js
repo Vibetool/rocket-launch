@@ -593,7 +593,7 @@ const BOOST_MUL = 1.4;
 // 登月：越过卡门线后再爬升 2 km 即抵达月球
 const MOON_TRIGGER_ALT = SPACE_LINE + 2000;
 const MOON_START_ALT = 1000;     // 从 1 km 高度开始降落
-const MOON_SAFE_SPEED = 8;       // 触地速度上限（月面无大气，全靠反推）
+const MOON_SAFE_SPEED = 16;      // 触地速度上限（月面无大气，全靠反推）
 
 // 火焰配色：常态黄→橙；推力加成生效时整条尾焰变蓝→紫
 const FLAME = {
