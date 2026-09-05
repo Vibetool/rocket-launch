@@ -1,0 +1,473 @@
+const $ = id => document.getElementById(id);
+
+// ---------- 状态 ----------
+const state = {
+  mode: 'build',        // build | fly | result
+  stack: [],            // 自下而上的零件 [{partId, fuel}]
+  stages: [],           // 飞行中的段
+  active: 0,            // 当前受控段索引
+  t: 0,
+  maxAlt: 0,
+  camY: 0,
+  particles: [],
+  sprites: {},
+  spritesReady: false,
+  result: null,
+};
+
+// ---------- 素材加载（有图用图，没图用矢量兜底） ----------
+const SPRITE_NAMES = ['engine_small','engine_medium','engine_large',
+                      'fuel_small','fuel_medium','fuel_large','decoupler','launchpad'];
+function loadSprites() {
+  let pending = SPRITE_NAMES.length;
+  if (!pending) { state.spritesReady = true; return; }
+  SPRITE_NAMES.forEach(n => {
+    const img = new Image();
+    img.onload = () => { state.sprites[n] = img; if (--pending === 0) state.spritesReady = true; };
+    img.onerror = () => { if (--pending === 0) state.spritesReady = true; };
+    img.src = `assets/${n}.png`;
+  });
+}
+
+// ---------- 装配 ----------
+function stackHeight() { return state.stack.reduce((s,p)=>s+PARTS[p.partId].h, 0); }
+function stackMass() {
+  return state.stack.reduce((s,p)=>s+PARTS[p.partId].mass + (p.fuel||0)*FUEL_MASS_PER_UNIT, 0);
+}
+function stackThrust() {
+  return state.stack.filter(p=>PARTS[p.partId].type==='engine')
+                    .reduce((s,p)=>s+PARTS[p.partId].thrust, 0);
+}
+function stackBurn() {
+  return state.stack.filter(p=>PARTS[p.partId].type==='engine')
+                    .reduce((s,p)=>s+PARTS[p.partId].burn, 0);
+}
+function stackFuel() { return state.stack.reduce((s,p)=>s+(p.fuel||0), 0); }
+
+function addPart(partId) {
+  const def = PARTS[partId];
+  state.stack.push({ partId, fuel: def.type === 'fuel' ? def.capacity : 0 });
+  renderBuild();
+}
+function removeAt(i) { state.stack.splice(i,1); renderBuild(); }
+function moveAt(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= state.stack.length) return;
+  [state.stack[i], state.stack[j]] = [state.stack[j], state.stack[i]];
+  renderBuild();
+}
+
+function renderBuild() {
+  // 零件面板
+  const pal = $('palette');
+  if (!pal.dataset.filled) {
+    pal.innerHTML = '';
+    ['engine','fuel','decoupler'].forEach(cat => {
+      const items = PART_LIST.filter(p => p.type === cat);
+      const g = document.createElement('div'); g.className = 'pal-group';
+      g.innerHTML = `<div class="pal-title">${cat==='engine'?'引擎':cat==='fuel'?'燃料箱':'分离器'}</div>`;
+      items.forEach(p => {
+        const b = document.createElement('button');
+        b.className = 'pal-item';
+        const spec = p.type==='engine' ? `推力 ${p.thrust} · 耗 ${p.burn}/s`
+                   : p.type==='fuel'   ? `容量 ${p.capacity}`
+                   : `分离推力 ${p.separationImpulse}`;
+        b.innerHTML = `<span class="pi-thumb" data-s="${p.sprite}"></span>
+                       <span class="pi-txt"><b>${p.name}</b><i>${spec}</i></span>`;
+        b.onclick = () => addPart(p.id);
+        g.appendChild(b);
+      });
+      pal.appendChild(g);
+    });
+    pal.dataset.filled = '1';
+    paintThumbs();
+  }
+
+  // 已装配列表（显示时自上而下，数据是自下而上）
+  const list = $('stackList');
+  list.innerHTML = '';
+  if (!state.stack.length) {
+    list.innerHTML = '<div class="empty">从左侧选零件开始搭建<br><small>列表底部 = 火箭底部</small></div>';
+  }
+  [...state.stack].reverse().forEach((p, ri) => {
+    const i = state.stack.length - 1 - ri;
+    const def = PARTS[p.partId];
+    const row = document.createElement('div');
+    row.className = 'stack-row t-' + def.type;
+    row.innerHTML = `
+      <span class="sr-n">${i+1}</span>
+      <span class="sr-name">${def.name}</span>
+      <span class="sr-spec">${def.type==='engine' ? `${def.thrust}推 / ${def.burn}耗`
+                            : def.type==='fuel' ? `${p.fuel} 燃料` : '分离'}</span>
+      <span class="sr-btns">
+        <button title="上移">▲</button><button title="下移">▼</button><button title="删除">✕</button>
+      </span>`;
+    const [up, dn, del] = row.querySelectorAll('button');
+    up.onclick = () => moveAt(i, +1);
+    dn.onclick = () => moveAt(i, -1);
+    del.onclick = () => removeAt(i);
+    list.appendChild(row);
+  });
+
+  // 统计：起飞看的是「第一级推力 ÷ 全箭质量」，上面级此刻还是死重
+  const m = stackMass();
+  const groups = splitByDecouplers(state.stack);
+  const s1 = groups[0] || [];
+  const s1Thrust = s1.filter(p => PARTS[p.partId].type === 'engine')
+                     .reduce((s, p) => s + PARTS[p.partId].thrust, 0);
+  const s1Burn = s1.filter(p => PARTS[p.partId].type === 'engine')
+                   .reduce((s, p) => s + PARTS[p.partId].burn, 0);
+  const s1Fuel = s1.reduce((s, p) => s + (p.fuel || 0), 0);
+  const twr = m > 0 ? (s1Thrust * THRUST_SCALE) / (m * 9.8) : 0;
+  const burnTime = s1Burn > 0 ? s1Fuel / s1Burn : 0;
+  $('statMass').textContent = m.toFixed(1);
+  $('statThrust').textContent = s1Thrust + (groups.length > 1 ? ` (共${stackThrust()})` : '');
+  $('statTWR').textContent = twr.toFixed(2);
+  $('statBurn').textContent = burnTime.toFixed(1) + 's';
+  const twrEl = $('statTWR');
+  twrEl.className = twr >= 1.3 ? 'good' : twr >= 1.05 ? 'warn' : 'bad';
+  $('twrHint').textContent =
+      s1Thrust === 0 ? '第一级没有引擎 —— 火箭底部需要装引擎'
+    : s1Fuel === 0   ? '第一级没有燃料'
+    : twr < 1.05     ? '起飞推重比过低，火箭抬不起来（需要 > 1）'
+    : twr < 1.3      ? '推重比偏低，上升会很慢、很费油'
+    : `起飞推重比良好 · 第一级可烧 ${burnTime.toFixed(0)} 秒`;
+  $('btnLaunch').disabled = !(s1Thrust > 0 && s1Fuel > 0 && twr >= 1.05);
+  drawPreview();
+}
+
+function paintThumbs() {
+  document.querySelectorAll('.pi-thumb').forEach(el => {
+    const name = el.dataset.s;
+    const img = state.sprites[name];
+    if (img) { el.style.backgroundImage = `url(${img.src})`; }
+    else { el.classList.add('fallback', 'fb-' + name.split('_')[0]); }
+  });
+}
+
+// launchpad.png 实测几何（1536x1024，天空已洗成透明）
+const PAD_W = 1536, PAD_H = 1024;
+const PAD_DECK_Y = 783;        // 混凝土甲板上表面 —— 火箭底部对齐这里
+const PAD_EDGE_GRASS_Y = 904;  // 图片左右边缘处的草地顶边
+const PAD_GRASS_COLOR = '#6e863f';  // 取自贴图草地基色，接缝才看不出来
+
+// ---------- 预览画布 ----------
+const pv = $('preview'), pvx = pv.getContext('2d');
+function drawPreview() {
+  const W = pv.width = pv.clientWidth * devicePixelRatio;
+  const H = pv.height = pv.clientHeight * devicePixelRatio;
+  pvx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  const w = pv.clientWidth, h = pv.clientHeight;
+  pvx.clearRect(0,0,w,h);
+  if (!state.stack.length) return;
+  const total = stackHeight();
+  const scale = Math.min(1, (h - 40) / total);
+  const cx = w/2;
+  let y = h - 20;
+  state.stack.forEach(p => {
+    const def = PARTS[p.partId];
+    const ph = def.h * scale, pw = def.w * scale;
+    drawPart(pvx, def, cx - pw/2, y - ph, pw, ph);
+    y -= ph;
+  });
+}
+
+// 画单个零件（有贴图用贴图，否则矢量兜底）
+function drawPart(ctx, def, x, y, w, h) {
+  const img = state.sprites[def.sprite];
+  if (img) { ctx.drawImage(img, x, y, w, h); return; }
+  ctx.save();
+  ctx.lineWidth = Math.max(1.5, w*0.05);
+  ctx.strokeStyle = '#16233a';
+  if (def.type === 'fuel') {
+    ctx.fillStyle = '#f2f5fa';
+    ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = '#2b3f5c';
+    ctx.fillRect(x, y + h - h*0.12, w, h*0.12);
+  } else if (def.type === 'engine') {
+    ctx.fillStyle = '#9aa7bb';
+    const bodyH = h * 0.55;
+    ctx.fillRect(x, y, w, bodyH); ctx.strokeRect(x, y, w, bodyH);
+    // 梯形喷口
+    ctx.beginPath();
+    ctx.moveTo(x + w*0.12, y + bodyH);
+    ctx.lineTo(x + w*0.88, y + bodyH);
+    ctx.lineTo(x + w, y + h);
+    ctx.lineTo(x, y + h);
+    ctx.closePath();
+    ctx.fillStyle = '#5d6b80'; ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ff8a3d';
+    ctx.fillRect(x + w*0.1, y + bodyH*0.3, w*0.8, bodyH*0.18);
+  } else {
+    ctx.fillStyle = '#f5c542';
+    ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = '#16233a';
+    for (let i = 0; i < 6; i++) ctx.fillRect(x + w*(0.08+i*0.15), y + h*0.3, w*0.06, h*0.4);
+  }
+  ctx.restore();
+}
+
+// ---------- 发射 ----------
+function launch() {
+  const groups = splitByDecouplers(state.stack.map(p => ({...p})));
+  // 全部段初始叠在一起，从下往上排（第一段在最下）
+  state.stages = groups.map(g => new Stage(g, 0, 0));
+  state.active = 0;
+  state.t = 0; state.maxAlt = 0; state.particles = []; state.result = null;
+  state.camY = 0;   // 相机必须归零，否则再次发射时天空还停在上一局的高度
+  // 只有最底段点火（其余作为上面级，随下段一起被"背着"）
+  state.mode = 'fly';
+  last = 0; acc = 0;
+  $('buildScreen').hidden = true;
+  $('flyScreen').hidden = false;
+  requestAnimationFrame(loop);
+}
+
+// 一个零件高度单位对应多少米（保持物理与渲染比例一致：sc / PX）
+const PART_UNIT_M = 0.55 / 0.35;
+function stageHeightM(st) {
+  return st.parts.reduce((s, p) => s + PARTS[p.partId].h, 0) * PART_UNIT_M;
+}
+
+function separate() {
+  if (state.active >= state.stages.length - 1) return;
+  const cur = state.stages[state.active];
+  const nxt = state.stages[state.active + 1];
+  // 上面级从下面级顶端脱离，继承速度并获得分离推力
+  nxt.x = cur.x; nxt.y = cur.y + stageHeightM(cur);
+  nxt.vx = cur.vx; nxt.vy = cur.vy + 6;   // 分离小推力
+  cur.vy -= 2;                             // 反冲
+  cur.separated = true;
+  state.active++;
+  for (let i=0;i<18;i++) state.particles.push({
+    x: cur.x, y: cur.y, vx:(Math.random()-.5)*40, vy:(Math.random()-.5)*40,
+    life: .6, sep: true });
+}
+
+// ---------- 飞行主循环 ----------
+const cv = $('sky'), cx = cv.getContext('2d');
+let last = 0, acc = 0;
+const FIXED_DT = 1 / 60;
+function loop(ts) {
+  if (state.mode !== 'fly') return;
+  // 切后台回来时 rAF 会攒出巨大间隔，钳一下避免物理炸开
+  const raw = last ? (ts - last) / 1000 : FIXED_DT;
+  last = ts;
+  acc += Math.min(0.25, raw);
+  let steps = 0;
+  while (acc >= FIXED_DT && steps < 8) { update(FIXED_DT); acc -= FIXED_DT; steps++; }
+  render();
+  requestAnimationFrame(loop);
+}
+
+function update(dt) {
+  state.t += dt;
+  const act = state.stages[state.active];
+
+  // 活动段推着上面所有未分离的级：它们的质量计入加速度，位置随动
+  if (act && !act.landed) {
+    const upper = state.stages.slice(state.active + 1);
+    const carried = upper.reduce((s, st) => s + st.mass, 0);
+    stepStage(act, dt, carried);
+    // 未分离的上面级坐在下面级顶端，逐级往上累加高度
+    let off = stageHeightM(act);
+    upper.forEach(st => {
+      st.x = act.x; st.y = act.y + off; st.vx = act.vx; st.vy = act.vy;
+      off += stageHeightM(st);
+    });
+  }
+
+  // 已分离的下面级自由落体
+  state.stages.forEach((st, i) => {
+    if (i < state.active) stepStage(st, dt);
+  });
+
+  if (act) state.maxAlt = Math.max(state.maxAlt, act.y);
+
+  // 尾焰粒子
+  if (act && act.thrusting && !act.landed) {
+    for (let i=0;i<3;i++) state.particles.push({
+      x: act.x + (Math.random()-.5)*10, y: act.y - 4,
+      vx: (Math.random()-.5)*12, vy: -20 - Math.random()*30, life: .5 });
+  }
+  state.particles.forEach(p => { p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt; });
+  state.particles = state.particles.filter(p => p.life > 0);
+
+  // 相机跟随
+  if (act) state.camY += (act.y - state.camY) * Math.min(1, dt*3);
+
+  // 胜负判定
+  if (act) {
+    if (act.y >= SPACE_LINE) finish(true);
+    else if (act.landed && state.t > 1) finish(false);
+  }
+  updateHUD();
+}
+
+function updateHUD() {
+  const act = state.stages[state.active];
+  if (!act) return;
+  $('hAlt').textContent = (act.y/1000).toFixed(2) + ' km';
+  $('hVel').textContent = act.vy.toFixed(0) + ' m/s';
+  $('hFuel').textContent = act.totalFuel.toFixed(0);
+  const maxF = act.parts.reduce((s,p)=>s + (PARTS[p.partId].capacity||0), 0);
+  $('fuelBar').style.width = (maxF ? act.totalFuel/maxF*100 : 0) + '%';
+  $('hStage').textContent = `第 ${state.active+1} 级 / 共 ${state.stages.length}`;
+  const hasNext = state.active < state.stages.length - 1;
+  $('btnSep').disabled = !hasNext;
+  // 本级烧干且还有上面级 —— 必须分离，否则死重拖着一起掉下去
+  const dry = act.totalFuel <= 0.01;
+  $('btnSep').classList.toggle('urgent', dry && hasNext);
+  $('sepHint').hidden = !(dry && hasNext);
+}
+
+function finish(win) {
+  state.mode = 'result';
+  state.result = { win, alt: state.maxAlt, t: state.t };
+  $('rTitle').textContent = win ? '🚀 成功进入太空！' : '💥 任务失败';
+  $('rTitle').className = win ? 'win' : 'lose';
+  $('rAlt').textContent = (state.maxAlt/1000).toFixed(2) + ' km';
+  $('rTime').textContent = state.t.toFixed(1) + ' s';
+  $('rNote').textContent = win ? '你的火箭越过了 100 km 卡门线，正式抵达太空。'
+    : state.maxAlt < 1000 ? '几乎没飞起来 —— 试试加大引擎或减少死重。'
+    : '燃料耗尽后掉回地面。试试用分离器抛掉空燃料箱减重。';
+  $('resultBox').hidden = false;
+}
+
+// ---------- 渲染 ----------
+function render() {
+  const w = cv.width = cv.clientWidth * devicePixelRatio;
+  const h = cv.height = cv.clientHeight * devicePixelRatio;
+  cx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  const W = cv.clientWidth, H = cv.clientHeight;
+
+  // 天空随高度变深
+  const alt = state.camY;
+  const f = Math.min(1, alt / ATMO_TOP);
+  const g = cx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, mix('#6fb7ef','#01030c', Math.min(1,f*1.3)));
+  g.addColorStop(1, mix('#cfe8fb','#0a1224', Math.min(1,f*1.1)));
+  cx.fillStyle = g; cx.fillRect(0,0,W,H);
+
+  // 星星
+  if (f > 0.35) {
+    cx.fillStyle = `rgba(255,255,255,${(f-0.35)/0.65})`;
+    for (let i=0;i<70;i++) {
+      const sx = (i*7919 % 1000)/1000*W;
+      const sy = ((i*104729 % 1000)/1000*H + (alt*0.02)%H) % H;
+      cx.fillRect(sx, sy, 1.6, 1.6);
+    }
+  }
+
+  const PX = 0.35;                 // 米 → 像素
+  const groundY = H*0.78 + state.camY*PX;
+  const cxs = W/2;
+
+  // 发射场。PAD_* 是 launchpad.png 的实测几何（见文件顶部常量）：
+  // 甲板面对齐 groundY（火箭站立高度），草坪按贴图边缘高度铺满整屏，两侧不留空。
+  const pad = state.sprites.launchpad;
+  if (groundY > -200) {
+    if (pad) {
+      const pw = Math.max(380, Math.min(W * 0.55, 560));
+      const s = pw / PAD_W;
+      const grassY = groundY + (PAD_EDGE_GRASS_Y - PAD_DECK_Y) * s;
+      cx.fillStyle = PAD_GRASS_COLOR;
+      if (grassY < H) cx.fillRect(0, grassY, W, H - grassY);
+      cx.drawImage(pad, cxs - pw/2, groundY - PAD_DECK_Y * s, pw, PAD_H * s);
+    } else {
+      cx.fillStyle = '#4a8f42';
+      cx.beginPath(); cx.moveTo(0, groundY+60);
+      cx.quadraticCurveTo(W*0.3, groundY-18, W*0.5, groundY);
+      cx.quadraticCurveTo(W*0.72, groundY+16, W, groundY+50);
+      cx.lineTo(W, H); cx.lineTo(0,H); cx.fill();
+      cx.fillStyle = '#3a4657'; cx.fillRect(cxs-70, groundY-10, 140, 12);
+      cx.fillStyle = '#8794a8';
+      cx.fillRect(cxs-92, groundY-92, 9, 84); cx.fillRect(cxs-78, groundY-104, 7, 96);
+    }
+  }
+
+  // 粒子
+  state.particles.forEach(p => {
+    const py = groundY - p.y*PX;
+    cx.globalAlpha = Math.max(0, p.life*1.6);
+    cx.fillStyle = p.sep ? '#ffd76e' : (p.life>0.3 ? '#ffd166' : '#ff6b35');
+    cx.fillRect(cxs + p.x*PX - 2, py, 4, 4);
+  });
+  cx.globalAlpha = 1;
+
+  // 各段火箭
+  state.stages.forEach((st, i) => {
+    if (i < state.active && st.landed) return;
+    const baseY = groundY - st.y*PX;
+    let y = baseY;
+    const sc = 0.55;
+    st.parts.forEach(p => {
+      const def = PARTS[p.partId];
+      const ph = def.h*sc, pw = def.w*sc;
+      drawPart(cx, def, cxs + st.x*PX - pw/2, y - ph, pw, ph);
+      y -= ph;
+    });
+  });
+
+  // 高度标尺
+  cx.fillStyle = 'rgba(255,255,255,.75)'; cx.font = '11px system-ui';
+  for (let km=0; km<=100; km+=10) {
+    const yy = groundY - km*1000*PX;
+    if (yy < -20 || yy > H+20) continue;
+    cx.fillRect(W-46, yy, 12, 1);
+    cx.fillText(km+'km', W-34, yy+4);
+  }
+}
+
+function mix(a,b,t){
+  const p=c=>[parseInt(c.slice(1,3),16),parseInt(c.slice(3,5),16),parseInt(c.slice(5,7),16)];
+  const [r1,g1,b1]=p(a),[r2,g2,b2]=p(b);
+  return `rgb(${r1+(r2-r1)*t|0},${g1+(g2-g1)*t|0},${b1+(b2-b1)*t|0})`;
+}
+
+// ---------- 事件 ----------
+$('btnLaunch').onclick = launch;
+$('btnSep').onclick = separate;
+$('btnAbort').onclick = backToBuild;
+$('btnAgain').onclick = () => { $('resultBox').hidden = true; launch(); };
+$('btnEdit').onclick = () => { $('resultBox').hidden = true; backToBuild(); };
+$('btnClear').onclick = () => { state.stack = []; renderBuild(); };
+$('btnPreset').onclick = () => {
+  state.stack = [
+    { partId:'engine_large', fuel:0 }, { partId:'fuel_large', fuel:100 },
+    { partId:'decoupler', fuel:0 },
+    { partId:'engine_medium', fuel:0 }, { partId:'fuel_medium', fuel:60 },
+  ];
+  renderBuild();
+};
+function backToBuild() {
+  state.mode = 'build';
+  $('flyScreen').hidden = true;
+  $('buildScreen').hidden = false;
+  renderBuild();
+}
+document.addEventListener('keydown', e => {
+  if (state.mode !== 'fly') return;
+  if (e.code === 'Space') { e.preventDefault(); separate(); }
+});
+window.addEventListener('resize', () => { if (state.mode==='build') drawPreview(); });
+
+loadSprites();
+setTimeout(() => { paintThumbs(); drawPreview(); }, 800);
+renderBuild();
+
+// 页面不可见时浏览器会暂停 requestAnimationFrame，这个钩子可手动步进物理，供自动化测试使用
+window.__rocket = {
+  state,
+  step(seconds = 1) {
+    const n = Math.round(seconds / FIXED_DT);
+    for (let i = 0; i < n && state.mode === 'fly'; i++) update(FIXED_DT);
+    return { t: state.t, alt: state.stages[state.active]?.y ?? 0, mode: state.mode };
+  },
+  separate,
+};
+
+// 回到前台时重置计时基准，避免累积的时间差一次性灌进物理
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { last = 0; acc = 0; }
+});

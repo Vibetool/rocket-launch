@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>火箭发射 · Rocket Launch</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#141d2e; --panel-2:#1b2739; --line:#26344a;
+    --text:#e8eef8; --dim:#93a4bd; --faint:#5d6e88;
+    --accent:#ff8a3d; --accent-2:#4cc4ff; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+  html,body{height:100%;overscroll-behavior:none}
+  body{
+    background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;overflow:hidden;
+  }
+  button{font:inherit;color:inherit;cursor:pointer;border:none;background:none;touch-action:manipulation}
+
+  /* ---------- 装配界面 ---------- */
+  #buildScreen{display:flex;flex-direction:column;height:100%}
+  .topbar{
+    display:flex;align-items:center;gap:12px;padding:12px 16px;
+    padding-top:max(12px,env(safe-area-inset-top));
+    border-bottom:1px solid var(--line);background:var(--panel);
+  }
+  .logo{font-size:17px;font-weight:800;letter-spacing:.5px}
+  .logo span{color:var(--accent)}
+  .top-actions{margin-left:auto;display:flex;gap:8px}
+  .btn{
+    padding:9px 15px;border-radius:9px;background:var(--panel-2);
+    border:1px solid var(--line);font-size:13.5px;font-weight:600;
+    transition:background .15s,border-color .15s;
+  }
+  .btn:hover:not(:disabled){background:#243348;border-color:#3a4c68}
+  .btn.primary{background:linear-gradient(120deg,var(--accent),#ffb056);color:#2a1400;border:none}
+  .btn.primary:disabled{opacity:.4;cursor:not-allowed;filter:grayscale(.6)}
+  .btn.ghost{background:transparent}
+
+  .build-body{flex:1;display:grid;grid-template-columns:280px 1fr 300px;gap:1px;background:var(--line);min-height:0}
+  .col{background:var(--bg);overflow-y:auto;overscroll-behavior:contain;padding:14px}
+  .col h3{font-size:12px;letter-spacing:1.6px;color:var(--faint);font-weight:700;margin-bottom:12px}
+
+  .pal-group{margin-bottom:18px}
+  .pal-title{font-size:12px;color:var(--dim);font-weight:700;margin-bottom:7px;padding-left:2px}
+  .pal-item{
+    display:flex;align-items:center;gap:11px;width:100%;padding:9px 11px;margin-bottom:6px;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;text-align:left;
+    transition:background .15s,border-color .15s,transform .12s;
+  }
+  .pal-item:hover{background:var(--panel-2);border-color:#3a4c68;transform:translateX(2px)}
+  .pi-thumb{
+    width:34px;height:34px;flex:none;border-radius:7px;background:#0d1523 center/contain no-repeat;
+    border:1px solid var(--line);
+  }
+  .pi-thumb.fb-engine{background:linear-gradient(160deg,#8e9cb4,#4a5a72)}
+  .pi-thumb.fb-fuel{background:linear-gradient(160deg,#f2f5fa,#c3cddc)}
+  .pi-thumb.fb-decoupler{background:linear-gradient(160deg,#f5c542,#c99b16)}
+  .pi-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .pi-txt b{font-size:13.5px;font-weight:650}
+  .pi-txt i{font-size:11.5px;color:var(--dim);font-style:normal}
+
+  .mid{display:flex;flex-direction:column;align-items:center;background:
+    radial-gradient(600px 400px at 50% 20%, rgba(76,196,255,.07), transparent 70%), var(--bg)}
+  #preview{flex:1;width:100%;min-height:0}
+  .mid-hint{font-size:12px;color:var(--faint);padding:8px 0 14px}
+
+  .stack-row{
+    display:grid;grid-template-columns:22px 1fr auto auto;align-items:center;gap:8px;
+    padding:8px 10px;margin-bottom:5px;background:var(--panel);
+    border:1px solid var(--line);border-left-width:3px;border-radius:8px;font-size:13px;
+  }
+  .stack-row.t-engine{border-left-color:var(--accent)}
+  .stack-row.t-fuel{border-left-color:var(--accent-2)}
+  .stack-row.t-decoupler{border-left-color:var(--warn)}
+  .sr-n{color:var(--faint);font-size:11px;font-variant-numeric:tabular-nums}
+  .sr-name{font-weight:600}
+  .sr-spec{font-size:11.5px;color:var(--dim);white-space:nowrap}
+  .sr-btns{display:flex;gap:3px}
+  .sr-btns button{
+    width:23px;height:23px;border-radius:5px;background:var(--panel-2);
+    font-size:10px;color:var(--dim);border:1px solid var(--line);
+  }
+  .sr-btns button:hover{background:#2c3c54;color:var(--text)}
+  .empty{padding:30px 12px;text-align:center;color:var(--faint);font-size:13px;line-height:1.9}
+
+  .stats{margin-top:16px;padding:13px;background:var(--panel);border:1px solid var(--line);border-radius:11px}
+  .stat{display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px}
+  .stat span:first-child{color:var(--dim)}
+  .stat span:last-child{font-weight:700;font-variant-numeric:tabular-nums}
+  .stat .good{color:var(--ok)} .stat .warn{color:var(--warn)} .stat .bad{color:var(--bad)}
+  #twrHint{font-size:11.5px;color:var(--dim);margin-top:8px;padding-top:8px;border-top:1px solid var(--line);line-height:1.6}
+  #btnLaunch{width:100%;margin-top:12px;padding:13px;font-size:15px}
+
+  /* ---------- 飞行界面 ---------- */
+  #flyScreen{position:fixed;inset:0;display:flex;flex-direction:column}
+  #sky{flex:1;width:100%;display:block}
+  .hud{
+    position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:14px;
+    padding:12px 16px;padding-top:max(12px,env(safe-area-inset-top));
+    background:linear-gradient(180deg,rgba(6,10,18,.86),transparent);
+  }
+  .hud-item{display:flex;flex-direction:column;gap:2px;white-space:nowrap}
+  .hud-item b{font-size:16px;font-variant-numeric:tabular-nums;font-weight:700}
+  .hud-item i{font-size:10.5px;color:var(--dim);font-style:normal;letter-spacing:1px}
+  .hud-right{margin-left:auto;display:flex;gap:8px}
+  .hud-right .btn{white-space:nowrap}
+  /* 窄屏收紧 HUD，避免数值与按钮折行 */
+  @media (max-width:820px){
+    .hud{gap:9px;padding:10px 12px}
+    .hud-item b{font-size:14px}
+    .hud-item i{font-size:9.5px;letter-spacing:.5px}
+    .hud-right .btn{padding:8px 10px;font-size:12.5px}
+  }
+  @media (max-width:620px){
+    .hud-item i{display:none}
+    .hud-item b{font-size:13px}
+  }
+  .fuel-wrap{position:absolute;left:16px;right:16px;bottom:calc(74px + env(safe-area-inset-bottom));height:7px;
+    background:rgba(255,255,255,.14);border-radius:99px;overflow:hidden}
+  #fuelBar{height:100%;background:linear-gradient(90deg,var(--accent),#ffd166);transition:width .12s}
+  .fly-ctrl{
+    position:absolute;left:0;right:0;bottom:0;display:flex;gap:10px;justify-content:center;
+    padding:14px 16px;padding-bottom:max(14px,env(safe-area-inset-bottom));
+    background:linear-gradient(0deg,rgba(6,10,18,.86),transparent);
+  }
+  .fly-ctrl .btn{min-width:118px;text-align:center;padding:12px}
+  .btn.urgent{animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+  #sepHint{
+    position:absolute;left:0;right:0;bottom:calc(88px + env(safe-area-inset-bottom));
+    text-align:center;font-size:13.5px;font-weight:700;color:#ffd166;
+    text-shadow:0 2px 8px rgba(0,0,0,.8);
+  }
+  #sepHint[hidden]{display:none}
+  @media (prefers-reduced-motion:reduce){.btn.urgent{animation:none}}
+
+  #resultBox{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:rgba(6,10,18,.82);backdrop-filter:blur(4px);
+  }
+  /* display:flex 会盖过 UA 的 [hidden]{display:none}，必须显式声明 */
+  #resultBox[hidden],#flyScreen[hidden],#buildScreen[hidden]{display:none}
+  .result-card{
+    width:min(360px,88vw);padding:26px;background:var(--panel);
+    border:1px solid var(--line);border-radius:18px;text-align:center;
+  }
+  .result-card h2{font-size:22px;margin-bottom:16px}
+  .result-card h2.win{color:var(--ok)} .result-card h2.lose{color:var(--bad)}
+  .r-stats{display:flex;gap:12px;margin-bottom:14px}
+  .r-stat{flex:1;padding:11px;background:var(--panel-2);border-radius:10px}
+  .r-stat b{display:block;font-size:19px;font-variant-numeric:tabular-nums}
+  .r-stat i{font-size:11px;color:var(--dim);font-style:normal}
+  #rNote{font-size:13px;color:var(--dim);line-height:1.8;margin-bottom:18px}
+  .r-btns{display:flex;gap:9px}
+  .r-btns .btn{flex:1;padding:12px}
+
+  /* ---------- 移动端 ---------- */
+  @media (max-width:900px){
+    .build-body{grid-template-columns:1fr;grid-template-rows:auto 200px auto;overflow-y:auto}
+    .col{max-height:none}
+    #preview{min-height:180px}
+    .logo{font-size:15px}
+    .top-actions .btn{padding:8px 11px;font-size:12.5px}
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ 装配 ============ -->
+<div id="buildScreen">
+  <div class="topbar">
+    <div class="logo">🚀 火箭发射 <span>ROCKET LAUNCH</span></div>
+    <div class="top-actions">
+      <button class="btn ghost" id="btnPreset">示例火箭</button>
+      <button class="btn ghost" id="btnClear">清空</button>
+    </div>
+  </div>
+
+  <div class="build-body">
+    <div class="col">
+      <h3>零件库</h3>
+      <div id="palette"></div>
+    </div>
+
+    <div class="col mid">
+      <canvas id="preview"></canvas>
+      <div class="mid-hint">火箭预览 · 底部朝下</div>
+    </div>
+
+    <div class="col">
+      <h3>已装配（上 → 下）</h3>
+      <div id="stackList"></div>
+      <div class="stats">
+        <div class="stat"><span>总质量</span><span id="statMass">0</span></div>
+        <div class="stat"><span>总推力</span><span id="statThrust">0</span></div>
+        <div class="stat"><span>推重比</span><span id="statTWR">0</span></div>
+        <div class="stat"><span>可燃时长</span><span id="statBurn">0s</span></div>
+        <div id="twrHint"></div>
+        <button class="btn primary" id="btnLaunch" disabled>🚀 发射</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 飞行 ============ -->
+<div id="flyScreen" hidden>
+  <canvas id="sky"></canvas>
+  <div class="hud">
+    <div class="hud-item"><b id="hAlt">0 km</b><i>高度</i></div>
+    <div class="hud-item"><b id="hVel">0 m/s</b><i>垂直速度</i></div>
+    <div class="hud-item"><b id="hFuel">0</b><i>燃料</i></div>
+    <div class="hud-item"><b id="hStage">1 / 1</b><i>级</i></div>
+    <div class="hud-right">
+      <button class="btn ghost" id="btnAbort">返回装配</button>
+    </div>
+  </div>
+  <div class="fuel-wrap"><div id="fuelBar" style="width:100%"></div></div>
+  <div id="sepHint" hidden>⚠️ 本级燃料耗尽 —— 立即分离！</div>
+  <div class="fly-ctrl">
+    <button class="btn primary" id="btnSep">分离 (空格)</button>
+  </div>
+
+  <div id="resultBox" hidden>
+    <div class="result-card">
+      <h2 id="rTitle">结果</h2>
+      <div class="r-stats">
+        <div class="r-stat"><b id="rAlt">0</b><i>最高高度</i></div>
+        <div class="r-stat"><b id="rTime">0</b><i>飞行时间</i></div>
+      </div>
+      <div id="rNote"></div>
+      <div class="r-btns">
+        <button class="btn" id="btnEdit">改装火箭</button>
+        <button class="btn primary" id="btnAgain">再来一次</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 普通脚本按依赖顺序加载：file:// 直接双击即可运行（ES 模块会被同源策略拦截） -->
+<script src="parts.js"></script>
+<script src="physics.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
