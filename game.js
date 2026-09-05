@@ -409,7 +409,8 @@ function render() {
   state.particles.forEach(p => {
     const py = groundY - p.y*PX;
     cx.globalAlpha = Math.max(0, p.life*1.6);
-    cx.fillStyle = p.sep ? '#ffd76e' : (p.life>0.3 ? '#ffd166' : '#ff6b35');
+    const pal = flamePalette();
+    cx.fillStyle = p.sep ? pal.spark : (p.life > 0.3 ? pal.hot : pal.cool);
     cx.fillRect(cxs + p.x*PX - 2, py, 4, 4);
   });
   cx.globalAlpha = 1;
@@ -453,6 +454,13 @@ const PAD_HIT_ZONES = [
   { x0: 421, y0: 140, x1: 475, y1: 790, name: '高塔' },
 ];
 const BOOST_MUL = 1.4;
+
+// 火焰配色：常态黄→橙；推力加成生效时整条尾焰变蓝→紫
+const FLAME = {
+  normal: { hot: '#ffd166', cool: '#ff6b35', spark: '#ffd76e' },
+  boost:  { hot: '#7cc8ff', cool: '#a855f7', spark: '#c4b5fd' },
+};
+function flamePalette() { return state.boost > 1 ? FLAME.boost : FLAME.normal; }
 
 // 屏幕坐标 → 贴图坐标，再看是否落在热区内
 function hitLaunchPad(mx, my) {
