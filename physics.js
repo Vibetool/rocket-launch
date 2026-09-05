@@ -85,7 +85,8 @@ function stepStage(st, dt, carriedMass = 0) {
     const got = st.drawFuel(want);
     if (got > 0) {
       const ratio = want > 0 ? got / want : 0;
-      ay += (st.maxThrust * THRUST_SCALE * st.throttle * ratio) / totalMass;
+      // thrustMul：彩蛋加成等外部倍率，默认 1
+      ay += (st.maxThrust * (st.thrustMul || 1) * THRUST_SCALE * st.throttle * ratio) / totalMass;
     }
   }
 

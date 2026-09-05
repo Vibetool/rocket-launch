@@ -224,9 +224,12 @@ function launch() {
   state.active = 0;
   state.t = 0; state.maxAlt = 0; state.particles = []; state.result = null;
   state.camY = 0;   // 相机必须归零，否则再次发射时天空还停在上一局的高度
+  state.boost = 1;          // 彩蛋推力倍率，单局有效
+  state.stages.forEach(st => { st.thrustMul = 1; });
   // 只有最底段点火（其余作为上面级，随下段一起被"背着"）
   state.mode = 'fly';
   last = 0; acc = 0;
+  $('boostBadge').hidden = true;
   $('buildScreen').hidden = true;
   $('flyScreen').hidden = false;
   requestAnimationFrame(loop);
@@ -379,6 +382,7 @@ function render() {
   // 发射场。PAD_* 是 launchpad.png 的实测几何（见文件顶部常量）：
   // 甲板面对齐 groundY（火箭站立高度），草坪按贴图边缘高度铺满整屏，两侧不留空。
   const pad = state.sprites.launchpad;
+  state.padRect = null;
   if (groundY > -200) {
     if (pad) {
       const pw = Math.max(380, Math.min(W * 0.55, 560));
@@ -387,6 +391,8 @@ function render() {
       cx.fillStyle = PAD_GRASS_COLOR;
       if (grassY < H) cx.fillRect(0, grassY, W, H - grassY);
       cx.drawImage(pad, cxs - pw/2, groundY - PAD_DECK_Y * s, pw, PAD_H * s);
+      // 记下本帧贴图位置，双击彩蛋据此把屏幕坐标换算回贴图坐标
+      state.padRect = { x: cxs - pw / 2, y: groundY - PAD_DECK_Y * s, s };
     } else {
       cx.fillStyle = '#4a8f42';
       cx.beginPath(); cx.moveTo(0, groundY+60);
@@ -437,6 +443,68 @@ function mix(a,b,t){
   const [r1,g1,b1]=p(a),[r2,g2,b2]=p(b);
   return `rgb(${r1+(r2-r1)*t|0},${g1+(g2-g1)*t|0},${b1+(b2-b1)*t|0})`;
 }
+
+// ---------- 彩蛋：局内双击发射台，本局推力 +40% ----------
+// 热区用 launchpad.png 的实测像素坐标划定：只有混凝土平台和两座塔架算数，
+// 下方草地山体不算（用户明确要求）。
+const PAD_HIT_ZONES = [
+  { x0: 271, y0: 781, x1: 1223, y1: 858, name: '平台' },  // 甲板到草地线
+  { x0: 322, y0: 190, x1: 376, y1: 790, name: '矮塔' },
+  { x0: 421, y0: 140, x1: 475, y1: 790, name: '高塔' },
+];
+const BOOST_MUL = 1.4;
+
+// 屏幕坐标 → 贴图坐标，再看是否落在热区内
+function hitLaunchPad(mx, my) {
+  const r = state.padRect;
+  if (!r) return false;
+  const ix = (mx - r.x) / r.s;
+  const iy = (my - r.y) / r.s;
+  return PAD_HIT_ZONES.some(z => ix >= z.x0 && ix <= z.x1 && iy >= z.y0 && iy <= z.y1);
+}
+
+function tryBoost(mx, my) {
+  if (state.mode !== 'fly') return;
+  if (!hitLaunchPad(mx, my)) return;          // 点在山体或别处 —— 无效
+  if (state.boost > 1) { toastShip('推力加成已在生效中'); return; }
+  state.boost = BOOST_MUL;
+  state.stages.forEach(st => { st.thrustMul = BOOST_MUL; });
+  $('boostBadge').hidden = false;
+  toastShip('🔥 发射台超频！本局推力 +40%');
+  // 平台喷一圈火花
+  const r = state.padRect;
+  for (let i = 0; i < 26; i++) {
+    state.particles.push({
+      x: (Math.random() - 0.5) * 60, y: Math.random() * 6,
+      vx: (Math.random() - 0.5) * 90, vy: 20 + Math.random() * 70,
+      life: 0.9, sep: true,
+    });
+  }
+}
+
+function canvasPoint(e) {
+  const b = cv.getBoundingClientRect();
+  const t = e.changedTouches ? e.changedTouches[0] : e;
+  return [t.clientX - b.left, t.clientY - b.top];
+}
+
+cv.addEventListener('dblclick', e => {
+  const [x, y] = canvasPoint(e);
+  tryBoost(x, y);
+});
+
+// 触屏没有 dblclick：自己判定 350ms 内两次靠近的轻点
+let lastTap = 0, lastTapX = 0, lastTapY = 0;
+cv.addEventListener('touchend', e => {
+  const [x, y] = canvasPoint(e);
+  const now = Date.now();
+  if (now - lastTap < 350 && Math.hypot(x - lastTapX, y - lastTapY) < 32) {
+    tryBoost(x, y);
+    lastTap = 0;
+  } else {
+    lastTap = now; lastTapX = x; lastTapY = y;
+  }
+}, { passive: true });
 
 // ---------- 事件 ----------
 $('btnLaunch').onclick = launch;
@@ -496,6 +564,9 @@ window.__rocket = {
     return { t: state.t, alt: state.stages[state.active]?.y ?? 0, mode: state.mode };
   },
   separate,
+  render,           // 页面不可见时 rAF 不跑，测试需要手动触发绘制
+  tryBoost,         // 彩蛋命中判定，便于自动化验证
+  hitLaunchPad,
 };
 
 // 回到前台时重置计时基准，避免累积的时间差一次性灌进物理

@@ -95,6 +95,19 @@
   #twrHint{font-size:11.5px;color:var(--dim);margin-top:8px;padding-top:8px;border-top:1px solid var(--line);line-height:1.6}
   #btnLaunch{width:100%;margin-top:12px;padding:13px;font-size:15px}
 
+  /* 彩蛋加成徽章 */
+  #boostBadge{
+    align-self:center;padding:7px 13px;border-radius:9px;
+    font-size:12.5px;font-weight:800;letter-spacing:.5px;
+    color:#2a1400;background:linear-gradient(120deg,#ffd166,#ff8a3d);
+    box-shadow:0 0 18px rgba(255,138,61,.55);
+    animation:boostPulse 1.6s ease-in-out infinite;white-space:nowrap;
+  }
+  #boostBadge[hidden]{display:none}
+  @keyframes boostPulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.22)}}
+  @media (prefers-reduced-motion:reduce){#boostBadge{animation:none}}
+  @media (max-width:620px){#boostBadge{font-size:11px;padding:6px 9px}}
+
   /* 载入飞船提示条 */
   .ship-toast{
     position:fixed;left:50%;top:70px;transform:translateX(-50%);
@@ -229,6 +242,7 @@
     <div class="hud-item"><b id="hFuel">0</b><i>燃料</i></div>
     <div class="hud-item"><b id="hStage">1 / 1</b><i>级</i></div>
     <div class="hud-right">
+      <span id="boostBadge" hidden>🔥 推力 +40%</span>
       <button class="btn ghost" id="btnAbort">返回装配</button>
     </div>
   </div>
