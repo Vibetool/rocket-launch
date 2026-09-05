@@ -224,6 +224,16 @@ function launch() {
   state.active = 0;
   state.t = 0; state.maxAlt = 0; state.particles = []; state.result = null;
   state.camY = 0;   // 相机必须归零，否则再次发射时天空还停在上一局的高度
+  state.phase = 'ascent';   // ascent → transfer → moon_choice → moon_landing
+  state.world = 'earth';
+  setWorld('earth');
+  state.lastImpact = 0;
+  $('moonHud').hidden = true;
+  $('earthHud').hidden = false;
+  $('fuelWrap').hidden = false;
+  $('btnSep').hidden = false;
+  $('btnBurn').hidden = true;
+  $('rAlt').nextElementSibling.textContent = '最高高度';
   state.boost = 1;          // 彩蛋推力倍率，单局有效
   state.stages.forEach(st => { st.thrustMul = 1; });
   // 只有最底段点火（其余作为上面级，随下段一起被"背着"）
@@ -276,6 +286,9 @@ function update(dt) {
   state.t += dt;
   const act = state.stages[state.active];
 
+  // 触地瞬间 stepStage 会把 vy 清零，先留一份用于月面着陆判定
+  if (act && !act.landed) state.lastImpact = Math.abs(act.vy);
+
   // 活动段推着上面所有未分离的级：它们的质量计入加速度，位置随动
   if (act && !act.landed) {
     const upper = state.stages.slice(state.active + 1);
@@ -308,10 +321,21 @@ function update(dt) {
   // 相机跟随
   if (act) state.camY += (act.y - state.camY) * Math.min(1, dt*3);
 
-  // 胜负判定
+  // 阶段判定
   if (act) {
-    if (act.y >= SPACE_LINE) finish(true);
-    else if (act.landed && state.t > 1) finish(false);
+    if (state.phase === 'moon_landing') {
+      if (act.landed) {
+        const impact = state.lastImpact || 0;
+        moonResult(impact <= MOON_SAFE_SPEED, impact);
+      }
+    } else if (state.phase === 'transfer') {
+      // 继续飞行段：再爬 2 km 抵达月球；燃尽掉回去则任务失败
+      if (act.y >= MOON_TRIGGER_ALT) reachMoon();
+      else if (act.landed && state.t > 1) finish(false);
+    } else {
+      if (act.y >= SPACE_LINE) finish(true);
+      else if (act.landed && state.t > 1) finish(false);
+    }
   }
   updateHUD();
 }
@@ -319,6 +343,13 @@ function update(dt) {
 function updateHUD() {
   const act = state.stages[state.active];
   if (!act) return;
+  if (state.phase === 'moon_landing') {
+    const v = act.vy;
+    $('mAlt').textContent = act.y.toFixed(0) + ' m';
+    $('mVel').textContent = Math.abs(v).toFixed(1) + ' m/s';
+    $('mVel').className = Math.abs(v) <= MOON_SAFE_SPEED ? 'safe' : 'danger';
+    $('mFuel').textContent = act.totalFuel.toFixed(0);
+  }
   $('hAlt').textContent = (act.y/1000).toFixed(2) + ' km';
   $('hVel').textContent = act.vy.toFixed(0) + ' m/s';
   $('hFuel').textContent = act.totalFuel.toFixed(0);
@@ -347,7 +378,98 @@ function finish(win) {
   $('rNote').textContent = win ? '你的火箭越过了 100 km 卡门线，正式抵达太空。'
     : state.maxAlt < 1000 ? '几乎没飞起来 —— 试试加大引擎或减少死重。'
     : '燃料耗尽后掉回地面。试试用分离器抛掉空燃料箱减重。';
+  // 只有在地球段成功入轨才给「继续飞行」——去月球的入口
+  const canContinue = win && state.phase === 'ascent';
+  $('btnContinue').hidden = !canContinue;
+  if (canContinue) {
+    $('rNote').textContent = '你的火箭越过了 100 km 卡门线。燃料还有剩，要继续往上飞吗？';
+  }
   $('resultBox').hidden = false;
+}
+
+// ---------- 继续飞行：保住动能，接着往上 ----------
+// 关键：不重置任何速度/位置，从暂停的那一刻原样继续
+function continueFlight() {
+  $('resultBox').hidden = true;
+  $('btnContinue').hidden = true;
+  state.phase = 'transfer';
+  state.mode = 'fly';
+  last = 0; acc = 0;              // 只重置计时基准，动能原样保留
+  requestAnimationFrame(loop);
+}
+
+// ---------- 抵达月球 ----------
+function reachMoon() {
+  state.mode = 'result';
+  state.phase = 'moon_choice';
+  showAchievement('🌕 阿波罗计划', '飞越卡门线后再上升 2 公里，抵达月球');
+  $('moonBox').hidden = false;
+}
+
+// 剩余飞船「满油量」的 30%——按各燃料箱自身容量的 30% 分配，
+// 不是把当前余油砍到 30%
+function setMoonFuel() {
+  const st = state.stages[state.active];
+  st.parts.forEach(p => {
+    const def = PARTS[p.partId];
+    if (def && def.type === 'fuel') p.fuel = def.capacity * 0.30;
+  });
+  return st.totalFuel;
+}
+
+function startMoonLanding() {
+  $('moonBox').hidden = true;
+  const st = state.stages[state.active];
+  // 只保留仍在飞的那一段，其余抛掉
+  state.stages = [st];
+  state.active = 0;
+  const fuel = setMoonFuel();
+
+  setWorld('moon');
+  state.phase = 'moon_landing';
+  state.world = 'moon';
+  st.y = MOON_START_ALT;          // 1 公里高度开始
+  st.vy = 0; st.vx = 0; st.x = 0;
+  st.landed = false; st.crashed = false;
+  st.throttle = 0;                // 月面降落改为手动控制油门
+  state.camY = MOON_START_ALT;
+  state.maxAlt = MOON_START_ALT;
+  state.t = 0;
+  state.particles = [];
+  state.mode = 'fly';
+  last = 0; acc = 0;
+
+  $('moonHud').hidden = false;
+  $('earthHud').hidden = true;      // 两套 HUD 不能同时显示，否则文字重叠
+  $('fuelWrap').hidden = true;
+  $('btnSep').hidden = true;
+  $('btnBurn').hidden = false;
+  toastShip(`月面进近 · 燃料 ${fuel.toFixed(0)}（满载的 30%）`);
+  requestAnimationFrame(loop);
+}
+
+function moonResult(ok, impact) {
+  state.mode = 'result';
+  state.phase = 'moon_done';
+  $('rTitle').textContent = ok ? '🌕 月面着陆成功！' : '💥 着陆失败';
+  $('rTitle').className = ok ? 'win' : 'lose';
+  $('rAlt').textContent = impact.toFixed(1) + ' m/s';
+  $('rAlt').nextElementSibling.textContent = '触地速度';
+  $('rTime').textContent = state.t.toFixed(1) + ' s';
+  $('rNote').textContent = ok
+    ? `以 ${impact.toFixed(1)} m/s 平稳接地，阿波罗计划圆满完成。`
+    : `触地速度 ${impact.toFixed(1)} m/s，超过 ${MOON_SAFE_SPEED} m/s 安全上限，着陆器损毁。`;
+  $('btnContinue').hidden = true;
+  $('resultBox').hidden = false;
+}
+
+// 右上角成就弹出
+function showAchievement(title, desc) {
+  const el = document.createElement('div');
+  el.className = 'achv';
+  el.innerHTML = `<b>${title}</b><i>${desc}</i>`;
+  document.body.appendChild(el);
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 500); }, 4200);
 }
 
 // ---------- 渲染 ----------
@@ -356,6 +478,8 @@ function render() {
   const h = cv.height = cv.clientHeight * devicePixelRatio;
   cx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
   const W = cv.clientWidth, H = cv.clientHeight;
+
+  if (state.phase === 'moon_landing') { renderMoon(W, H); return; }
 
   // 天空随高度变深
   const alt = state.camY;
@@ -455,6 +579,11 @@ const PAD_HIT_ZONES = [
 ];
 const BOOST_MUL = 1.4;
 
+// 登月：越过卡门线后再爬升 2 km 即抵达月球
+const MOON_TRIGGER_ALT = SPACE_LINE + 2000;
+const MOON_START_ALT = 1000;     // 从 1 km 高度开始降落
+const MOON_SAFE_SPEED = 8;       // 触地速度上限（月面无大气，全靠反推）
+
 // 火焰配色：常态黄→橙；推力加成生效时整条尾焰变蓝→紫
 const FLAME = {
   normal: { hot: '#ffd166', cool: '#ff6b35', spark: '#ffd76e' },
@@ -514,7 +643,88 @@ cv.addEventListener('touchend', e => {
   }
 }, { passive: true });
 
+// ---------- 月面渲染 ----------
+function renderMoon(W, H) {
+  // 月球没有大气，天空全黑
+  cx.fillStyle = '#05060b';
+  cx.fillRect(0, 0, W, H);
+  cx.fillStyle = 'rgba(255,255,255,.85)';
+  for (let i = 0; i < 90; i++) {
+    const sx = (i * 7919 % 1000) / 1000 * W;
+    const sy = (i * 104729 % 1000) / 1000 * H;
+    cx.fillRect(sx, sy, i % 7 === 0 ? 2 : 1.4, i % 7 === 0 ? 2 : 1.4);
+  }
+  // 远处的地球
+  const eb = Math.min(W, H) * 0.075;
+  cx.beginPath(); cx.arc(W * 0.82, H * 0.16, eb, 0, 7);
+  cx.fillStyle = '#3d7fc4'; cx.fill();
+  cx.beginPath(); cx.arc(W * 0.82 - eb * 0.25, H * 0.16 - eb * 0.2, eb * 0.42, 0, 7);
+  cx.fillStyle = '#4e9a4a'; cx.fill();
+
+  const PXM = 0.45;                                  // 月面段米→像素
+  const st = state.stages[state.active];
+  const groundY = H * 0.80 + state.camY * PXM;
+
+  // 月壤
+  if (groundY < H + 60) {
+    cx.fillStyle = '#8d8b86';
+    cx.beginPath();
+    cx.moveTo(0, groundY + 14);
+    cx.quadraticCurveTo(W * 0.22, groundY - 8, W * 0.44, groundY + 2);
+    cx.quadraticCurveTo(W * 0.68, groundY + 12, W, groundY - 4);
+    cx.lineTo(W, H); cx.lineTo(0, H); cx.closePath(); cx.fill();
+    // 环形坑
+    cx.fillStyle = '#7b7974';
+    [[0.15, 34], [0.63, 26], [0.86, 20]].forEach(([xr, r]) => {
+      cx.beginPath(); cx.ellipse(W * xr, groundY + 20, r, r * 0.34, 0, 0, 7); cx.fill();
+    });
+    // 着陆区标记
+    cx.strokeStyle = 'rgba(120,255,190,.55)'; cx.lineWidth = 2;
+    cx.setLineDash([7, 6]);
+    cx.beginPath(); cx.moveTo(W / 2 - 46, groundY + 3); cx.lineTo(W / 2 + 46, groundY + 3); cx.stroke();
+    cx.setLineDash([]);
+  }
+
+  // 尾焰粒子
+  state.particles.forEach(p => {
+    cx.globalAlpha = Math.max(0, p.life * 1.6);
+    const pal = flamePalette();
+    cx.fillStyle = p.life > 0.3 ? pal.hot : pal.cool;
+    cx.fillRect(W / 2 + p.x * PXM - 2, groundY - p.y * PXM, 4, 4);
+  });
+  cx.globalAlpha = 1;
+
+  // 着陆器
+  if (st) {
+    let y = groundY - st.y * PXM;
+    const sc = 0.55;
+    st.parts.forEach(p => {
+      const def = PARTS[p.partId];
+      const ph = def.h * sc, pw = def.w * sc;
+      drawPart(cx, def, W / 2 - pw / 2, y - ph, pw, ph);
+      y -= ph;
+    });
+  }
+}
+
 // ---------- 事件 ----------
+// 月面降落：按住点火（空格或按钮）
+function setBurn(on) {
+  if (state.phase !== 'moon_landing' || state.mode !== 'fly') return;
+  const st = state.stages[state.active];
+  if (st) st.throttle = on ? 1 : 0;
+  $('btnBurn').classList.toggle('firing', !!on);
+}
+$('btnBurn').addEventListener('mousedown', () => setBurn(true));
+$('btnBurn').addEventListener('touchstart', e => { e.preventDefault(); setBurn(true); }, { passive: false });
+['mouseup','mouseleave','touchend','touchcancel'].forEach(ev =>
+  $('btnBurn').addEventListener(ev, () => setBurn(false)));
+document.addEventListener('keyup', e => { if (e.code === 'Space') setBurn(false); });
+
+$('btnContinue').addEventListener('click', continueFlight);
+$('btnMoonLand').addEventListener('click', startMoonLanding);
+$('btnMoonHome').addEventListener('click', () => { location.href = 'index.html'; });
+
 $('btnLaunch').onclick = launch;
 $('btnSep').onclick = separate;
 $('btnAbort').onclick = backToBuild;
@@ -537,7 +747,11 @@ function backToBuild() {
 }
 document.addEventListener('keydown', e => {
   if (state.mode !== 'fly') return;
-  if (e.code === 'Space') { e.preventDefault(); separate(); }
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (state.phase === 'moon_landing') setBurn(true);
+    else separate();
+  }
 });
 window.addEventListener('resize', () => { if (state.mode==='build') drawPreview(); });
 

@@ -54,14 +54,22 @@ class Stage {
   }
 }
 
-// 重力随高度衰减
+// 当前所在天体。月球重力为地球的 2/3，且没有大气
+const MOON_G_RATIO = 2 / 3;
+let WORLD = 'earth';
+function setWorld(w) { WORLD = w; }
+function getWorld() { return WORLD; }
+
+// 重力随高度衰减（月球段高度尺度只有几公里，不做衰减）
 function gravityAt(altitude) {
+  if (WORLD === 'moon') return G * MOON_G_RATIO;
   const r = R_EARTH + Math.max(0, altitude);
   return G * (R_EARTH / r) ** 2;
 }
 
-// 大气密度（简化指数模型），用于阻力
+// 大气密度（简化指数模型），用于阻力。月球真空，无阻力
 function airDensity(altitude) {
+  if (WORLD === 'moon') return 0;
   if (altitude < 0) return 1.225;
   return 1.225 * Math.exp(-altitude / 8500);
 }
