@@ -67,8 +67,12 @@ function draw() {
     cx.fillRect(W / 2 - 90, groundY, 180, 14);
   }
 
-  // 建筑：底边落在草地线上，略低于甲板以呈现纵深
-  const baseY = groundY + Math.min(46, H * 0.055);
+  // 建筑底边必须落在真实草地线上。草地线由贴图缩放决定，会随窗口宽度变化，
+  // 之前用固定 46px 偏移，宽屏就悬浮、窄屏就埋进土里。
+  const padScale = (pad ? Math.max(400, Math.min(W * 0.52, 620)) : 620) / PAD_W;
+  const baseY = pad
+    ? groundY + (PAD_EDGE_GRASS_Y - PAD_DECK_Y) * padScale
+    : groundY + 26;   // 兜底地面用的偏移
   BUILDINGS.forEach(b => {
     const img = sprites[b.sprite];
     const bw = Math.max(b.minW, Math.min(W * b.wr, b.maxW));

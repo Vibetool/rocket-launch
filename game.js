@@ -407,7 +407,10 @@ function continueFlight() {
 function reachMoon() {
   state.mode = 'result';
   state.phase = 'moon_choice';
-  showAchievement('🌕 阿波罗计划', '飞越卡门线后再上升 2 公里，抵达月球');
+  state.boost = 1;                       // 超频 buff 到月球即失效
+  state.stages.forEach(x => { x.thrustMul = 1; });
+  $('boostBadge').hidden = true;
+  showAchievement('🌕 阿波罗计划', '飞越卡门线后再上升 5 公里，抵达月球');
   $('moonBox').hidden = false;
 }
 
@@ -425,6 +428,10 @@ function setMoonFuel() {
 function startMoonLanding() {
   $('moonBox').hidden = true;
   const st = state.stages[state.active];
+  // 发射台超频只作用于地球段，登月后失效
+  state.boost = 1;
+  state.stages.forEach(x => { x.thrustMul = 1; });
+  $('boostBadge').hidden = true;
   // 只保留仍在飞的那一段，其余抛掉
   state.stages = [st];
   state.active = 0;
@@ -591,7 +598,7 @@ const PAD_HIT_ZONES = [
 const BOOST_MUL = 1.4;
 
 // 登月：越过卡门线后再爬升 2 km 即抵达月球
-const MOON_TRIGGER_ALT = SPACE_LINE + 2000;
+const MOON_TRIGGER_ALT = SPACE_LINE + 5000;   // 越过卡门线后还要再爬 5 km
 const MOON_START_ALT = 1000;     // 从 1 km 高度开始降落
 const MOON_SAFE_SPEED = 16;      // 触地速度上限（月面无大气，全靠反推）
 
