@@ -44,6 +44,14 @@ function fleetAll() {
 }
 
 function fleetFind(id) {
+  // 云端飞船不在本地表里，主页点击时已暂存到 sessionStorage
+  try {
+    const raw = sessionStorage.getItem('rocket_remote_ship');
+    if (raw) {
+      const s = JSON.parse(raw);
+      if (s && s.id === id) { sessionStorage.removeItem('rocket_remote_ship'); return s; }
+    }
+  } catch (e) {}
   return fleetAll().find(s => s.id === id) || null;
 }
 
@@ -63,6 +71,9 @@ function fleetRecord(stack, apogee, time) {
     });
   }
   fleetWrite(list);
+  // 同步上报联机机库（失败不影响本地记录）
+  const saved = list.find(s => s.sig === sig);
+  if (saved && API()) { fleetPushRemote(saved).catch(() => {}); }
   return true;
 }
 
@@ -90,4 +101,65 @@ function fleetTakePending() {
     if (id) sessionStorage.removeItem(PENDING_KEY);
     return id;
   } catch (e) { return null; }
+}
+
+// ================= 联机机库 =================
+// 有 config.js 配了 ROCKET_API 就走云端；没配或请求失败则退回本机 localStorage。
+const API = () => (typeof window !== 'undefined' && window.ROCKET_API) || '';
+const NAME_KEY = 'rocket_player_name';
+
+function playerName() {
+  try { return localStorage.getItem(NAME_KEY) || ''; } catch (e) { return ''; }
+}
+function setPlayerName(n) {
+  try { localStorage.setItem(NAME_KEY, (n || '').slice(0, 16)); } catch (e) {}
+}
+
+// 拉取云端机库。失败返回 null（调用方据此退回本地）
+async function fleetFetchRemote(limit = 60) {
+  const url = API();
+  if (!url) return null;
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 8000);
+    const r = await fetch(`${url}?limit=${limit}`, { signal: ctl.signal });
+    clearTimeout(timer);
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (!d || !d.ok || !Array.isArray(d.ships)) return null;
+    return d.ships.map(s => ({ ...s, remote: true }));
+  } catch (e) { return null; }
+}
+
+// 上报一艘入轨飞船。返回是否成功送达云端
+async function fleetPushRemote(ship) {
+  const url = API();
+  if (!url) return false;
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 8000);
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        player: playerName(), name: ship.name,
+        stack: ship.stack, apogee: ship.apogee, time: ship.time,
+      }),
+      signal: ctl.signal, keepalive: true,
+    });
+    clearTimeout(timer);
+    const d = await r.json().catch(() => null);
+    return !!(d && d.ok);
+  } catch (e) { return false; }
+}
+
+// 机库总表：系统预置 + 云端（可用时）+ 本机记录
+// 云端与本机同款设计会去重，优先显示云端那条（带作者名）
+async function fleetAllAsync() {
+  const remote = await fleetFetchRemote();
+  const local = fleetRead().slice().sort((a, b) => (b.apogee || 0) - (a.apogee || 0));
+  if (!remote) return { ships: PRESET_SHIPS.concat(local), online: false };
+  const seen = new Set(remote.map(s => (s.stack || []).map(p => p.partId).join('|')));
+  const localOnly = local.filter(s => !seen.has((s.stack || []).map(p => p.partId).join('|')));
+  return { ships: PRESET_SHIPS.concat(remote, localOnly), online: true };
 }

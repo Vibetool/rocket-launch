@@ -103,6 +103,25 @@
   .ship-apo{font-size:15px;font-weight:800;color:var(--ok);font-variant-numeric:tabular-nums;text-align:right}
   .ship-apo small{display:block;font-size:10px;color:var(--faint);font-weight:500}
   .empty{padding:34px 20px;text-align:center;color:var(--faint);font-size:13px;line-height:2}
+
+  /* 联机状态条 */
+  .net-bar{
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+    padding:9px 12px;border-radius:10px;font-size:12px;
+    background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--dim);
+  }
+  .net-bar .dot{width:8px;height:8px;border-radius:50%;flex:none}
+  .net-bar.on .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .net-bar.off .dot{background:var(--faint)}
+  .net-bar .rename{
+    margin-left:auto;padding:4px 10px;border-radius:7px;font-size:11.5px;font-weight:650;
+    background:var(--panel-2);border:1px solid var(--line);color:var(--dim);
+  }
+  .net-bar .rename:hover{color:var(--text);border-color:var(--accent)}
+  /* 别人的飞船 */
+  .ship.is-remote{border-left:3px solid var(--ok)}
+  .tagu{font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;
+    background:rgba(74,222,128,.16);color:var(--ok);letter-spacing:.3px}
   .sheet-foot{padding:12px 20px;border-top:1px solid var(--line);font-size:11.5px;color:var(--faint);text-align:center}
 </style>
 </head>
@@ -141,6 +160,7 @@
 </div>
 
 <script src="parts.js"></script>
+<script src="config.js"></script>
 <script src="fleet.js"></script>
 <script src="home.js"></script>
 </body>

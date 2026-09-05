@@ -102,25 +102,37 @@ $('fleetClose').addEventListener('click', closeFleet);
 modal.addEventListener('click', e => { if (e.target === modal) closeFleet(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modal.hidden) closeFleet(); });
 
-function openFleet() { renderFleet(); modal.hidden = false; $('fleetClose').focus(); }
+function openFleet() { modal.hidden = false; $('fleetClose').focus(); renderFleet(); }
 function closeFleet() { modal.hidden = true; }
 
-function renderFleet() {
+async function renderFleet() {
   const list = $('shipList');
-  const ships = fleetAll();
+  list.innerHTML = '<div class="empty">正在连接雷达…</div>';
+
+  const { ships, online } = await fleetAllAsync();
   list.innerHTML = '';
 
-  const mine = ships.filter(s => !s.preset);
-  if (!mine.length) {
+  // 在线状态条
+  const bar = document.createElement('div');
+  bar.className = 'net-bar ' + (online ? 'on' : 'off');
+  bar.innerHTML = online
+    ? `<span class="dot"></span>已连接联机机库 · 显示全体玩家的入轨飞船
+       <button class="rename" id="btnRename">${playerName() ? '我是「' + playerName() + '」' : '设置昵称'}</button>`
+    : `<span class="dot"></span>离线模式 · 只显示本机记录`;
+  list.appendChild(bar);
+  if (online) $('btnRename').addEventListener('click', e => { e.stopPropagation(); askName(); });
+
+  const others = ships.filter(s => !s.preset);
+  if (!others.length) {
     const tip = document.createElement('div');
     tip.className = 'empty';
-    tip.innerHTML = '还没有自己的入轨记录<br><small>把火箭送过 100 km，它就会自动登记到这里</small>';
+    tip.innerHTML = '还没有入轨记录<br><small>把火箭送过 100 km，它就会登记到这里</small>';
     list.appendChild(tip);
   }
 
   ships.forEach(s => {
     const b = document.createElement('button');
-    b.className = 'ship' + (s.preset ? ' is-preset' : '');
+    b.className = 'ship' + (s.preset ? ' is-preset' : '') + (s.remote ? ' is-remote' : '');
     b.appendChild(miniRocket(s.stack));
 
     const mid = document.createElement('div');
@@ -130,30 +142,48 @@ function renderFleet() {
     if (s.preset) {
       const t = document.createElement('span'); t.className = 'tagp'; t.textContent = '系统预置';
       name.appendChild(t);
+    } else if (s.remote) {
+      const t = document.createElement('span'); t.className = 'tagu'; t.textContent = '@' + (s.player || '匿名');
+      name.appendChild(t);
     }
     const meta = document.createElement('div');
     meta.className = 'ship-meta';
     meta.textContent = s.preset ? s.desc
-      : `${stageCount(s.stack)} 级 · ${s.stack.length} 个零件 · ${new Date(s.ts).toLocaleDateString('zh-CN')}`;
+      : `${s.stages || stageCount(s.stack)} 级 · ${s.parts || s.stack.length} 个零件 · ${new Date(s.ts).toLocaleDateString('zh-CN')}`;
     mid.appendChild(name); mid.appendChild(meta);
     b.appendChild(mid);
 
     const apo = document.createElement('div');
     apo.className = 'ship-apo';
-    if (s.preset) { apo.innerHTML = '<small>点击载入</small>'; }
-    else { apo.innerHTML = `${(s.apogee / 1000).toFixed(1)}<small>km 最高</small>`; }
+    apo.innerHTML = s.preset ? '<small>点击载入</small>'
+                             : `${(s.apogee / 1000).toFixed(1)}<small>km 最高</small>`;
     b.appendChild(apo);
 
     b.addEventListener('click', () => {
+      // 云端飞船先塞进本地缓存，制造页才查得到
+      if (s.remote) cacheRemoteShip(s);
       fleetSetPending(s.id);
       location.href = 'game.html';
     });
     list.appendChild(b);
   });
 
-  $('fleetFoot').textContent = mine.length
-    ? `共 ${mine.length} 艘入轨飞船 · 记录保存在本机浏览器`
-    : '记录保存在本机浏览器';
+  $('fleetFoot').textContent = online
+    ? `共 ${others.length} 艘入轨飞船 · 来自所有玩家`
+    : `共 ${others.length} 艘 · 记录保存在本机浏览器`;
+}
+
+// 云端飞船暂存，供 game.html 载入
+function cacheRemoteShip(s) {
+  try { sessionStorage.setItem('rocket_remote_ship', JSON.stringify(s)); } catch (e) {}
+}
+
+function askName() {
+  const cur = playerName();
+  const n = prompt('设置你的昵称（会显示在联机机库里，最多 16 字）', cur);
+  if (n === null) return;
+  setPlayerName(n.trim());
+  renderFleet();
 }
 
 function stageCount(stack) {
