@@ -86,7 +86,13 @@ function draw() {
     }
     // 同步热区标签到建筑顶部
     const el = $(b.hs);
-    if (el) { el.style.left = x + 'px'; el.style.top = (y - bh - 10) + 'px'; }
+    if (el) {
+      // 标签以中心为轴左右各伸一半，窄屏会顶出视口被裁 —— 夹紧到边内
+      const half = (el.offsetWidth || 0) / 2;
+      const lx = half ? Math.max(half + 10, Math.min(x, W - half - 10)) : x;
+      el.style.left = lx + 'px';
+      el.style.top = (y - bh - 10) + 'px';
+    }
   });
 }
 
@@ -108,8 +114,16 @@ $('fleetClose').addEventListener('click', closeFleet);
 modal.addEventListener('click', e => { if (e.target === modal) closeFleet(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modal.hidden) closeFleet(); });
 
-function openFleet() { modal.hidden = false; $('fleetClose').focus(); renderFleet(); }
-function closeFleet() { modal.hidden = true; }
+function openFleet() {
+  modal.hidden = false; $('fleetClose').focus(); renderFleet();
+  // 压一条历史：安卓返回键才会关弹窗而不是直接退出游戏
+  try { history.pushState({ fleet: 1 }, ''); } catch (e) {}
+}
+function closeFleet() {
+  modal.hidden = true;
+  if (history.state && history.state.fleet) { try { history.back(); } catch (e) {} }
+}
+window.addEventListener('popstate', () => { if (!modal.hidden) modal.hidden = true; });
 
 async function renderFleet() {
   const list = $('shipList');

@@ -59,7 +59,7 @@ function addPart(partId) {
   renderBuild();
   afterAddPart();
 }
-function removeAt(i) { state.stack.splice(i,1); renderBuild(); }
+function removeAt(i) { state.stack.splice(i,1); renderBuild(); afterAddPart(); }
 function moveAt(i, dir) {
   const j = i + dir;
   if (j < 0 || j >= state.stack.length) return;
@@ -147,6 +147,7 @@ function renderBuild() {
     : `起飞推重比良好 · 第一级可烧 ${burnTime.toFixed(0)} 秒`;
   $('btnLaunch').disabled = !(s1Thrust > 0 && s1Fuel > 0 && twr >= 1.05);
   drawPreview();
+  afterAddPart();
   // 联机：本地改动的设计要同步给对方（收到对方设计时不回传）
   if (coopOn() && !COOP.applyingRemote) netSendShip(state.stack);
   if (coopOn()) updateCoopGate();
@@ -899,9 +900,10 @@ document.querySelectorAll('.tab-btn').forEach(b => {
 });
 MOBILE_Q.addEventListener('change', syncPanes);
 
-// 手机上加完零件自动跳到「已装配」，省得用户找不到刚加的零件
+// 加零件后停留在零件库继续搭，只在标签上提示数量变化
 function afterAddPart() {
-  if (MOBILE_Q.matches) setPane('stack');
+  const tab = document.querySelector('.tab-btn[data-tab="stack"]');
+  if (tab) tab.textContent = `📋 已装配 ${state.stack.length}`;
 }
 
 // 联机按钮是主页级操作，进入制造/飞行界面后收起，避免压住顶栏标题与 HUD
@@ -1061,6 +1063,10 @@ document.addEventListener('visibilitychange', () => {
       err('加入失败：' + ({ room_not_found: '房间不存在', room_full: '房间已满' }[e.message] || e.message));
     }
   });
+
+  // 手机键盘上的「前往」键直接提交，省得去够屏幕上的按钮
+  $('coopCode').addEventListener('keydown', e => { if (e.key === 'Enter') $('btnJoinRoom').click(); });
+  $('coopName').addEventListener('keydown', e => { if (e.key === 'Enter') $('coopCode').focus(); });
 
   $('btnCopyCode').addEventListener('click', () => {
     const c = $('roomCode').textContent;
