@@ -125,7 +125,8 @@ foreach ($stack as $p) {
 }
 // 至少要有一个引擎，否则不是能飞的设计
 $hasEngine = false;
-foreach ($clean as $p) { if (str_starts_with($p['partId'], 'engine_')) { $hasEngine = true; break; } }
+// 不用 str_starts_with：那是 PHP 8 才有的，服务器 PHP 版本可能更老
+foreach ($clean as $p) { if (strncmp($p['partId'], 'engine_', 7) === 0) { $hasEngine = true; break; } }
 if (!$hasEngine) sh_fail(422, 'no_engine');
 
 $sig = hash('sha256', implode('|', array_column($clean, 'partId')));
