@@ -57,6 +57,7 @@ function addPart(partId) {
   const def = PARTS[partId];
   state.stack.push({ partId, fuel: def.type === 'fuel' ? def.capacity : 0 });
   renderBuild();
+  afterAddPart();
 }
 function removeAt(i) { state.stack.splice(i,1); renderBuild(); }
 function moveAt(i, dir) {
@@ -759,7 +760,9 @@ function enterBuilding(withShip) {
   state.mode = 'build';
   if (coopOn()) { netSetBuilding(true); netSendShip(state.stack); }
   renderBuild();
+  syncPanes();
   updateCoopGate();
+  syncCoopBtn();
 }
 
 function backToHome() {
@@ -768,6 +771,7 @@ function backToHome() {
   $('flyScreen').hidden = true;
   window.HOME.show();
   updateCoopGate();
+  syncCoopBtn();
 }
 
 // 门禁：对方没进车间时，本方什么都不能操作
@@ -863,6 +867,49 @@ function bindCoopEvents() {
         break;
     }
   };
+}
+
+// ---------- 手机端：制造页三栏改标签页 ----------
+// 桌面是三栏并排；窄屏一路滚到底才够得到发射按钮，改成切页
+const MOBILE_Q = window.matchMedia('(max-width:900px)');
+
+function setPane(name) {
+  document.querySelectorAll('.build-body .col').forEach(c => {
+    c.classList.toggle('pane-on', c.dataset.pane === name);
+  });
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('on', b.dataset.tab === name);
+  });
+  if (name === 'preview') drawPreview();   // 切到预览页才有尺寸，需重画
+}
+
+function syncPanes() {
+  if (MOBILE_Q.matches) {
+    const cur = document.querySelector('.tab-btn.on')?.dataset.tab || 'parts';
+    setPane(cur);
+  } else {
+    // 桌面：三栏全显示，清掉标签态
+    document.querySelectorAll('.build-body .col').forEach(c => c.classList.remove('pane-on'));
+    drawPreview();
+  }
+}
+
+document.querySelectorAll('.tab-btn').forEach(b => {
+  b.addEventListener('click', () => setPane(b.dataset.tab));
+});
+MOBILE_Q.addEventListener('change', syncPanes);
+
+// 手机上加完零件自动跳到「已装配」，省得用户找不到刚加的零件
+function afterAddPart() {
+  if (MOBILE_Q.matches) setPane('stack');
+}
+
+// 联机按钮是主页级操作，进入制造/飞行界面后收起，避免压住顶栏标题与 HUD
+function syncCoopBtn() {
+  const btn = $('btnCoop');
+  if (!btn) return;
+  const onHome = !$('homeScreen').hidden;
+  btn.hidden = !(onHome && typeof netAvailable === 'function' && netAvailable());
 }
 
 // ---------- 事件 ----------
@@ -963,7 +1010,7 @@ document.addEventListener('visibilitychange', () => {
 (function bindCoopUI() {
   if (typeof netAvailable !== 'function') return;
   const has = netAvailable();
-  $('btnCoop').hidden = !has;
+  syncCoopBtn();
   if (!has) return;
   bindCoopEvents();
 
