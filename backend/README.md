@@ -9,14 +9,18 @@
 ## 2) 上传接口
 把 `ships.php` 传到站点根目录，比如 `/www/wwwroot/api.ovobot.ai/`
 
-## 3) 改 ships.php 头部配置
-```php
-const DB_HOST = '127.0.0.1';
-const DB_NAME = 'metro_game';      // 复用地铁那个库就填它
-const DB_USER = 'metro_user';
-const DB_PASS = '你的密码';
+## 3) 数据库配置 —— 不用填
+
+`ships.php` / `room.php` 会自动 `require` 同目录的 `db.php`（Mini Metro 后端），
+复用它已经配好的账号密码和 CORS。**两处配置不一致导致 `db_unavailable` 的问题不会再出现。**
+
+只有在单独部署、同目录没有 `db.php` 时，才需要改文件头部的兜底配置。
+
+## 3.5) 自检
 ```
-`CORS_ALLOWED_ORIGINS` 里默认已含 `https://vibetool.github.io`。
+GET room.php?action=selftest
+```
+返回连的是哪个库、三张表建了没，不泄露账号密码。
 
 ## 4) 前端开启联机
 改仓库根目录的 `config.js`：
